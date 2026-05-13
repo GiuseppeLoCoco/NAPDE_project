@@ -1,0 +1,332 @@
+from dolfin import *
+from ufl import tensors, nabla_div
+from .functions import *
+from fenicstools import interpolate_nonmatching_mesh
+from .constitutive_eq import *
+from .fem_stabilizations import *
+import numpy as np
+import sys
+import inspect
+
+sys.path.insert(0,  '..')
+from user_inputs import *
+from utilities.read import *
+
+
+PI = 3.14159265
+
+
+class Fluid_problem:	
+									
+	def __init__(self, fluid_mesh, bool_stream):
+		
+		allowed_keys = inspect.signature(calc_non_dimensional_numbers).parameters.keys()                # Get the parameter names of the function
+		filt_physical_parameters = {k: v for k, v in physical_parameters.items() if k in allowed_keys}       # Filter dicts to only include keys in the function's parameters
+		Re, _, _, Fr = calc_non_dimensional_numbers(**filt_physical_parameters, **characteristic_scales)
+
+		mesh = fluid_mesh.mesh
+		dim = mesh.geometry().dim()
+		
+		# Velocity components
+		self.u_components = dim
+		
+		V  = FunctionSpace(mesh, 'P', fem_degree['velocity_degree'], constrained_domain = constrained_domain)		  # Fluid velocity   
+		Q  = FunctionSpace(mesh, 'P', fem_degree['pressure_degree'], constrained_domain = constrained_domain)		  # Fluid pressure
+		Z1 = VectorFunctionSpace(mesh, 'P', fem_degree['lagrange_degree'])                                            # Lagrange multiplier
+
+		# --------------------------------
+
+		Vp = VectorFunctionSpace(mesh, 'P', fem_degree['velocity_degree'])
+
+		# Function assigner : scalar components to vector
+		self.assigner_uv = FunctionAssigner(Vp, [V for ui in range(self.u_components)])
+
+		# --------------------------------
+
+		self.u1  = TrialFunction(V)
+		self.v   = TestFunction(V)
+		self.p   = TrialFunction(Q)
+		self.q   = TestFunction(Q)
+		self.Lm1 = [TrialFunction(Z1.sub(ui)) for ui in range(self.u_components)]
+
+		variables = dict(); u_ = []; p_ = []
+		for i in range(3):
+			u_.insert(i, as_vector([Function(V) for ui in range(self.u_components)]))
+			p_.insert(i, Function(Q))
+
+		# PISO inner_loop variables
+		self.u_inner = as_vector([Function(V) for ui in range(self.u_components)])
+		self.p_inner = Function(Q)
+
+		self.p_x = Function(Q)
+		self.pvc_factor = 0.0
+		if pressure_velocity_coupling == "IPCS":	self.pvc_factor = 1.0
+
+		uv   = Function(Vp)		
+		Lm_f = Function(Z1)
+		Lm_f.vector().zero()
+
+		variables.update(u_=u_, uv=uv, p_=p_, Lm_f=Lm_f)	
+			
+		vort, psi = Function(Q), Function(Q)
+		vort.vector().zero(); psi.vector().zero()
+		variables.update(vort=vort, psi=psi)
+
+		# --------------------------------
+
+		# Body force
+		f = Constant((0,)*dim)
+		
+		# --------------------------------
+
+		self.nx = tensors.unit_vector(0, dim)
+		self.ny = tensors.unit_vector(1, dim)
+		if dim == 3: self.nz = tensors.unit_vector(2, dim)
+
+		self.A1 = None
+		self.A2 = None
+		self.A3 = None
+		self.null_space = VectorSpaceBasis([])
+		self.rs = []
+		self.residual = Function(V)
+		self.matrix = dict(Mij=None, Kij = None, Cij = None, \
+						   Sij = [None for ui in range(self.u_components)], \
+						   Bij = [None for ui in range(self.u_components)], \
+						   Pij = [None for ui in range(self.u_components)], \
+						   Yij = [None for ui in range(self.u_components)], \
+						   A1_as1 = None, A2_as2 = None, b1_Ls1 = None, A1_SCW1 = None, b2 = None)
+		
+		self.f = f
+		self.dim = dim
+		self.variables = variables
+		self.bool_stream = bool_stream
+		self.h_f = CellDiameter(mesh)
+		self.h_f_X = project(self.h_f, FunctionSpace(mesh, 'P', 1))
+		vertex_values_h_f_X = self.h_f_X.compute_vertex_values(mesh)
+		vn = np.max(1/(vertex_values_h_f_X))
+		self.VN_local = vn*vn
+		
+		self.F = [V, Q, Z1]
+		self.dx = Measure("dx", domain=mesh)
+		self.ds = Measure("ds", domain=mesh, subdomain_data=fluid_mesh.get_mesh_boundaries())	
+		self.n = FacetNormal(mesh)
+		if dim == 2: self.tang = as_vector([self.n[1], -self.n[0]])
+
+		self.Re = Constant(Re)
+		self.Fr = Constant(Fr)
+
+		# Convection matrix
+		self.u_ab = as_vector([Function(V) for ui in range(self.u_components)])    
+		self.Cij = dot(dot(self.u_ab, nabla_grad(self.u1)), self.v)*self.dx
+
+		# --------------------------------
+
+		# Define tentative_velocity_solver
+		self.u_solver = PETScKrylovSolver(tentative_velocity_solver['solver_type'], PETScPreconditioner(tentative_velocity_solver['preconditioner_type']))
+		self.u_solver.parameters.update(krylov_solvers)
+
+		# Define pressure_correction_solver
+		self.p_solver = PETScKrylovSolver(pressure_correction_solver['solver_type'], PETScPreconditioner(pressure_correction_solver['preconditioner_type']))
+		self.p_solver.parameters.update(krylov_solvers)
+		self.p_solver.set_reuse_preconditioner(True)
+
+		# Define velocity_correction_solver
+		self.u_solver_c = PETScKrylovSolver(velocity_correction_solver['solver_type'], PETScPreconditioner(velocity_correction_solver['preconditioner_type']))
+		self.u_solver_c.parameters.update(krylov_solvers)
+		self.u_solver_c.set_reuse_preconditioner(True)
+
+		# --------------------------------
+
+
+	def pre_assemble(self, bcs, dt):
+
+		d = self.matrix; Re = self.Re; dim = self.dim
+		u1 = self.u1; v = self.v; p = self.p; q = self.q
+		dx = self.dx; ds = self.ds; n = self.n; f = self.f
+		
+		d['Mij'] = assemble(dot(u1, v)*dx, tensor=d['Mij'])	                                    # Mass matrix 
+		d['Kij'] = assemble(dot((0.5/Re)*nabla_grad(u1), nabla_grad(v))*dx, tensor=d['Kij'])      	   		# Viscous matrix
+		
+		for ui in range(self.u_components):
+			d['Sij'][ui] = assemble(dot(p, v.dx(ui))*dx - dot(p*n[ui], v)*ds, tensor=d['Sij'][ui])      	# Pressure matrix
+			d['Bij'][ui] = assemble(dot(f[ui], v)*dx, tensor=d['Bij'][ui])                                  # Body-force vector
+			d['Pij'][ui] = assemble(dot(p.dx(ui), v)*dx, tensor=d['Pij'][ui])                               # Pressure-gradient matrix
+
+		for ui in range(self.u_components):
+			d['Yij'][ui] = assemble(dot(self.Lm1[ui], v)*dx, tensor=d['Yij'][ui])                       # Lagrange-multiplier matrix
+
+		self.A1 = self.matrix['Kij'].copy()
+		self.A1.axpy(1.0/float(dt), self.matrix['Mij'], True)
+	    	
+		self.A2 = ...		# matrix for pressure correction step
+		self.A3 = ...		# matrix for velocity correction step (for PISO or for DLM? It's up to you...)
+
+
+
+	def residual_NS_equation(self, ui, u1, u2, u_ab, p_, Lm_f, f, dt):
+			
+		U = 0.5*(u1 + u2)	
+		self.residual = (u1 - u2)/dt + dot(u_ab, nabla_grad(U)) + p_.dx(ui) - nabla_div((2/self.Re)*nabla_grad(U)) - f[ui] - Lm_f[ui]
+
+
+	# Predict tentative velocity
+	def assemble_tentative_velocity(self, u_, p_, Lm_f, dt):
+
+		d = self.matrix; Re = self.Re; f = self.f
+		u1 = self.u1; v = self.v; u_ab = self.u_ab
+		dx = self.dx; ds = self.ds; h_f = self.h_f
+
+		A1 = self.A1.copy()
+
+		# Advecting velocity 
+		for ui in range(self.u_components):
+			u_ab[ui].vector().zero()
+			u_ab[ui].vector().axpy(1.5, u_[1][ui].vector())
+			u_ab[ui].vector().axpy(-0.5, u_[2][ui].vector())
+
+		# Convective terms
+		d['Cij'] = assemble(self.Cij, tensor=d['Cij'])
+		A1.axpy(-0.5, d['Cij'], True)
+
+		X1 = A1.copy(); X1.axpy(-2.0, self.matrix['Kij'], True); b1 = [None]*self.u_components
+		for ui in range(self.u_components):
+			b1[ui] = Fluid_problem.optimized_rhs(self, ui, X1, u_[1], p_[1])	
+		
+		A1.axpy(1.0, d['Cij'], True)
+
+		# FSI lagrange multiplier
+		for ui in range(self.u_components):
+			b1[ui].axpy(1.0, d['Yij'][ui]*Lm_f.sub(ui).vector())
+
+		# Stabilization terms	
+		if stabilization_parameters['SUPG_NS'] == True:
+			tau_supg = tau(alpha, u_[1], h_f, Re, dt); operator_supg = Pop(u_ab, v)
+			for ui in range(self.u_components):
+				Fluid_problem.residual_NS_equation(self, ui, u1, u_[1][ui], u_ab, p_[1], Lm_f, f, dt)
+				S1 = tau_supg*dot(operator_supg, self.residual)*dx
+				if ui == 0:
+					d['A1_as1'] = assemble(lhs(S1), tensor=d['A1_as1'])
+					A1.axpy(1.0, d['A1_as1'], True)
+				d['b1_Ls1'] = assemble(rhs(S1), tensor=d['b1_Ls1'])
+				b1[ui].axpy(1.0, d['b1_Ls1'])
+
+		if stabilization_parameters['crosswind_NS'] == True:
+			self.rs.clear()
+			for ui in range(self.u_components):
+				Fluid_problem.residual_NS_equation(self, ui, u_[1][ui], u_[2][ui], u_ab, p_[1], Lm_f, f, dt)
+				self.rs.append(self.residual)
+			R = as_vector(self.rs)
+			d['A1_SCW1'] = assemble(inner(tau_cw(C_cw, u_[1], h_f, Re, R)*Pop_CW(u_ab, u1), nabla_grad(v))*dx, tensor=d['A1_SCW1'])
+			A1.axpy(1.0, d['A1_SCW1'], True)
+
+		return A1, b1	        
+
+	def optimized_rhs(self, ui, X1, u, p):
+
+	    b = self.matrix['Bij'][ui].copy()
+	    b.axpy(1.0, X1*u[ui].vector())
+	    b.axpy(self.pvc_factor, self.matrix['Sij'][ui]*p.vector())
+
+	    return b
+	
+	def change_initial_guess(self, u):
+
+		for i in range(self.dim):
+			u[i].vector().zero()
+		
+	def solve_tentative_velocity(self, A, x, b, bcs):
+	    
+		for ui in range(self.u_components):
+			[bc.apply(A, b[ui]) for bc in bcs[ui]]
+			self.u_solver.solve(A, x[ui].vector(), b[ui])
+			# solve(A, x[ui].vector(), b[ui], 'mumps')
+
+
+
+
+	# Pressure correction
+	def assemble_pressure_correction(self, u_, p_, Lm_f, dt):
+
+		p = self.p; q = self.q; dx = self.dx; f = self.f
+		h_f = self.h_f; u_ab = self.u_ab; Re = self.Re; d = self.matrix
+	
+		A2 = ...
+		L2 = ...
+		b2 = assemble(L2, tensor=d['b2'])
+		d['b2'] = b2
+
+		return A, b2
+
+	def solve_pressure_correction(self, A, x, b, bcs):
+	    
+		# You can use self.p_solver as the self.u_solver in solve_tentative_velocity
+		...
+
+
+	# Velocity correction  -  PISO
+	def assemble_velocity_correction(self, u_, p_0, p_1, dt):
+		# p_0: "new" pressure (sol of solve_pressure_correction)
+		# p_1: old solution
+
+		b3 = [None]*self.u_components
+
+		for ui in range(self.u_components):
+			b3[ui] = ...
+			...
+
+		return b3
+
+	def solve_velocity_correction(self, x, b, bcs):
+		
+		A = ...
+		for ui in range(self.u_components):
+			...
+			...
+
+
+	# Velocity correction  -  DLM
+	def assemble_velocity_correction_DLM(self, u_, Lm_, Lm_old_, dt):
+		# Lm_, Lm_old_ are vectors
+  
+		bDLM = [None]*self.u_components
+
+		for ui in range(self.u_components):
+			bDLM[ui] = ...
+			...
+
+		return bDLM
+
+	# Post-processing functions
+	def post_process_data(self, Mpi, u, p, t, tsp, text_file_handles):
+
+		Re = self.Re; n = self.n; ds = self.ds
+
+		# Compute drag, lift (note to self : written as per 3D sphere)
+		traction = -1*dot(sigma(Re, u, p), n)
+		drag = assemble(dot(traction, self.nx)*ds(4))/(0.5*(PI)/4)
+		lift = assemble(dot(traction, self.ny)*ds(4))/(0.5*(PI)/4)
+
+		Mpi.set_barrier()
+		if Mpi.get_rank() == 0:
+		    text_file_handles[0].write(f"{t:0,.10G}		{drag:0,.10G}		{lift:0,.10G}\n")    
+
+	def calc_vorticity_streamfunction(self, u, bcs):
+		
+		p = self.p; q = self.q; dx = self.dx
+		vort = self.variables['vort']; psi = self.variables['psi']
+
+		if self.bool_stream == True:
+            
+			# Compute vorticity by L2 projection
+			a = p*q*dx
+			L = (u.sub(0).dx(1) - u.sub(1).dx(0))*q*dx
+			solve(a == L, vort, solver_parameters={'linear_solver': 'gmres',
+                         'preconditioner': 'hypre_amg'})
+
+			# Compute stream function : Laplacian(psi) = -vort
+			a = inner(grad(p), grad(q))*dx
+			L = vort*q*dx
+			solve(a == L, psi, bcs, solver_parameters={'linear_solver': 'gmres',
+                         'preconditioner': 'hypre_amg'})
+
+		return vort, psi
