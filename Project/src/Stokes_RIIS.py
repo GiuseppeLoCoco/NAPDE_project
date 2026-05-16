@@ -46,6 +46,7 @@ class RIIS_solver:
             obstacle = rotatingLineObstacle(x_obs, 0.0,x_obs, y_obs, eps)
 
         
+
         # Data
         T_end = 1.0            # final time
         num_steps = 20    # number of time steps
@@ -101,13 +102,7 @@ class RIIS_solver:
         delta_expr = obstacle.delta(mesh, t)
         us_expr = as_vector((obstacle.us_x(t), obstacle.us_y(t)))
 
-        if self.conforming and self.moving:
-            w = us_expr
-        else:
-            w = Constant((0.0, 0.0))
-
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
-              + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
               + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
               - div(v)*p*dx \
               + div(u)*q*dx \
@@ -163,7 +158,7 @@ class RIIS_solver:
                 v_y = float(obstacle.us_y) if not hasattr(obstacle.us_y, 'assign') else obstacle.us_y
 
                 # Rigid displacement of the whole mesh
-                displacement = interpolate(as_vector([v_x * dt, v_y * dt]), V_coord)
+                displacement = interpolate(as_vector([velocity_x * dt, velocity_y * dt]), V_coord)
                 mesh.coordinates.assign(mesh.coordinates + displacement)
 
 
