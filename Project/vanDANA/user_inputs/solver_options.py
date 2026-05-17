@@ -1,63 +1,72 @@
-from dolfin import parameters
-from .user_parameters import problem_physics
+# Firedrake non implementa FFC_parameters globali allo stesso modo di dolfin.
+# L'ottimizzazione del codice generato C (UFLACS/TSFC) è attiva di default.
 
-# Form compiler parameters
-FFC_parameters = {"representation": 'uflacs', "optimize": True, "cpp_optimize": True, "quadrature_degree": 5, "cpp_optimize_flags": "-O3"}
+# Mappatura completa delle opzioni di algebra lineare su dizionari PETSc
+krylov_solvers = {
+    "ksp_monitor": False,
+    "ksp_view": False,
+    "ksp_converged_reason": False,
+    "ksp_initial_guess_nonzero": True,
+    "ksp_max_it": 300,
+    "ksp_atol": 1e-8
+}
 
-# Optimization options for dolfin
-parameters.update({ "linear_algebra_backend": "PETSc", "form_compiler": FFC_parameters, "std_out_all_processes": False})
-
-# -----------------------------------------------------------------------------------------
-
-# Solver parameters
-krylov_solvers=dict(monitor_convergence=False, report=False, error_on_nonconvergence=True, nonzero_initial_guess=True, maximum_iterations=300, absolute_tolerance=1e-8)
-
-# Solver dictionaries
-tentative_velocity_solver=dict(
+tentative_velocity_solver = dict(
     solver_type='bicgstab',
     preconditioner_type='jacobi')
 
-pressure_correction_solver=dict(
+pressure_correction_solver = dict(
     solver_type='gmres',
-    preconditioner_type='hypre_amg')
+    preconditioner_type='hypre') # 'hypre_amg' diventa 'hypre' in PETSc/Firedrake
 
-velocity_correction_solver=dict(
+velocity_correction_solver = dict(
     solver_type='cg',
     preconditioner_type='jacobi')
 
-energy_conservation_solver=dict(
+energy_conservation_solver = dict(
     solver_type='bicgstab',
     preconditioner_type='jacobi')
 
-
-pressure_velocity_coupling = "IPCS"                 # options: 1. Chorin 2. IPCS
-piso_iterations = 10                                 # no. of PISO iterations
-piso_tol = 1e-3                                     # tolerance for PISO loop
-
-# -----------------------------------------------------------------------------------------
+pressure_velocity_coupling = "IPCS"                 
+piso_iterations = 10                                 
+piso_tol = 1e-3                                     
 
 custom_newtons_solver = True
 line_search_solver = False
 
-solid_momentum_solver=dict(solver_type='bicgstab')                 
+solid_momentum_solver = dict(solver_type='bicgstab')                 
 
-if problem_physics['compressible_solid'] == False:
-    solid_momentum_solver.update(solver_type='mumps')               # Use 'mumps' (direct solver), if solid is incompressible
+if not problem_physics['compressible_solid']:
+    solid_momentum_solver.update(solver_type='mumps')               
     custom_newtons_solver = False
 
-if custom_newtons_solver == True:
+if custom_newtons_solver:
     solid_momentum_solver.update(solver_type='bcgs')
 
-# -----------------------------------------------------------------------------------------
+# Parametri del risolutore non lineare (NonlinearVariationalSolver) in Firedrake
+solid_displacement_parameters = {
+    "snes_type": "newtonls",
+    "ksp_type": solid_momentum_solver['solver_type'],
+    "pc_type": "hypre",
+    "snes_monitor": True,
+    "snes_atol": 1e-15,
+    "snes_rtol": 1e-6,
+    "snes_max_it": 20
+}
 
-solid_displacement_parameters = {"newton_solver":{"linear_solver":solid_momentum_solver['solver_type'], "preconditioner":'hypre_amg', "report":True, \
-                                                  "error_on_nonconvergence":True, "absolute_tolerance":1e-15, "relative_tolerance":1e-6, "maximum_iterations":20}}
+solid_displacement_custom_solver_parameters = {
+    "snes_atol": 1e-15,
+    "snes_rtol": 1e-6,
+    "snes_max_it": 20,
+    "snes_monitor": True
+}
 
-# used only if its a custom newtons solver for compressible solid 
-solid_displacement_custom_solver_parameters = {"absolute_tolerance":1e-15, "relative_tolerance":1e-6, "convergence_criterion":'residual', \
-                                               "maximum_iterations":20, "report":True, "error_on_nonconvergence":True} #, "relaxation_parameter":1.0}
-
-snes_solver_parameters = {"nonlinear_solver": "snes", "symmetric": True,
-                          "snes_solver": {"maximum_iterations": 10, "report": True, "error_on_nonconvergence": True,
-                                          "line_search": "bt", "linear_solver": "bicgstab", "method": "newtonls", 
-                                          "absolute_tolerance": 1e-9, "relative_tolerance": 1e-7}}
+snes_solver_parameters = {
+    "snes_type": "newtonls",
+    "snes_linesearch_type": "bt",
+    "snes_monitor": True,
+    "ksp_type": "bicgstab",
+    "snes_atol": 1e-9,
+    "snes_rtol": 1e-7,
+    "snes_max_it": 10
+}

@@ -1,110 +1,74 @@
-from dolfin import MPI, Timer, Constant
-import sys, subprocess, os
-from os import getpid, path, remove
-
+from mpi4py import MPI
+import sys, subprocess, os, time
+from os import getpid, path
 
 # Printing helper functions 
 RED = "\033[1;37;31m%s\033[0m"
 BLUE = "\033[1;37;34m%s\033[0m"
 GREEN = "\033[1;37;32m%s\033[0m"
 
-
-
-# Disable printing
 def blockPrint():
     sys.stdout = open(os.devnull, 'w')
 
-# Restore printing
 def enablePrint():
     sys.stdout = sys.__stdout__	
 
-# Remove killvanDANA file
 def remove_killvanDANA(directory):
     try:
         os.remove(path.join(directory, "killvanDANA"))
     except:
         pass
 
-# Remove complete file
 def remove_complete(directory):
     try:
         os.remove(path.join(directory, "complete"))
     except:
         pass
 
-
-
-
-# MPI utility
+# MPI utility mappato su mpi4py
 class MPI_Manage:
-
     def __init__(self):
-        
-        self.mpi_comm = MPI.comm_world
-        self.my_rank  = MPI.rank(self.mpi_comm)
-        self.size     = MPI.size(self.mpi_comm)
+        self.mpi_comm = MPI.COMM_WORLD
+        self.my_rank  = self.mpi_comm.Get_rank()
+        self.size     = self.mpi_comm.Get_size()
 
     def get_rank(self):
-        
         return self.my_rank
 
     def set_barrier(self):
-        
-        MPI.barrier(self.mpi_comm)
+        self.mpi_comm.Barrier()
 
     def get_communicator(self): 
-
         return self.mpi_comm
 
     def Max(self, x):
-
-        return MPI.max(self.mpi_comm, x)
+        return self.mpi_comm.allreduce(x, op=MPI.MAX)
 
     def Min(self, x):
-
-        return MPI.min(self.mpi_comm, x)        
+        return self.mpi_comm.allreduce(x, op=MPI.MIN)
 
     def Sum(self, x):
-        
-        return MPI.sum(self.mpi_comm, x)       
+        return self.mpi_comm.allreduce(x, op=MPI.SUM)       
 
-
-
-
-# Counter functions in loop
 def create_counters(i):
-
-    my_list = []
-    for x in range(0, i):
-        x = 0; my_list.append(x)
-
-    return my_list   
+    return [0 for _ in range(i)]
 
 def reset_counter(j, *args):
-
     if args:
-        for x in args:
-            j[x] = 0
+        for x in args: j[x] = 0
     else:
-        for i in range(len(j)):
-            j[i] = 0    
+        for i in range(len(j)): j[i] = 0    
 
 def update_counter(j, *args):
     if args:
-         for x in args:
-            j[x] += 1         
+         for x in args: j[x] += 1         
     else:
-        for i in range(len(j)):
-            j[i] += 1    
+        for i in range(len(j)): j[i] += 1    
 
-
-
-# Memory functions
 def getMemoryUsage(rss=True):
     mypid = str(getpid())
-    rss = "rss" if rss else "vsz"
-    process = subprocess.Popen(['ps', '-o', rss, mypid],
-                                stdout=subprocess.PIPE)
+    rss_val = "rss" if rss else "vsz"
+    process = subprocess.Popen(['ps', '-o', rss_val, mypid], stdout=subprocess.PIPE)
     out, _ = process.communicate()
     mymemory = out.split()[1]
     return eval(mymemory) / 1024
@@ -118,19 +82,24 @@ class MemoryUsage:
     def __call__(self, s, verbose=False):
         self.prev = self.memory
         self.prev_vm = self.memory_vm
-        self.memory = MPI.sum(MPI.comm_world, getMemoryUsage())
-        self.memory_vm = MPI.sum(MPI.comm_world, getMemoryUsage(False))
-        if verbose:
-            print(BLUE % '{0:26s}  {1:10d} MB {2:10d} MB {3:10d} MB {4:10d} MB'.format(s,
-                        int(self.memory - self.prev), int(self.memory),
-                        int(self.memory_vm - self.prev_vm), int(self.memory_vm)))
+        comm = MPI.COMM_WORLD
+        self.memory = comm.allreduce(getMemoryUsage(), op=MPI.SUM)
+        self.memory_vm = comm.allreduce(getMemoryUsage(False), op=MPI.SUM)
+        if verbose and comm.Get_rank() == 0:
+            print(BLUE % f'{s:26s}  {int(self.memory - self.prev):10d} MB {int(self.memory):10d} MB {int(self.memory_vm - self.prev_vm):10d} MB {int(self.memory_vm):10d} MB')
 
+# Sostituto leggero del Timer di dolfin
+class Timer:
+    def __init__(self, name):
+        self.name = name
+        self.t_start = 0.0
+    def start(self):
+        self.t_start = time.time()
+    def stop(self):
+        pass # Può essere esteso per loggare o accumulare i tempi
 
-
-# Timers
 timer_total = Timer("Total_run_time")
 timer_dt    = Timer("Time_step_timer")
-
 timer_s1    = Timer("Predict tentative velocity step")
 timer_s2    = Timer("Pressure correction step")
 timer_s3    = Timer("Velocity correction step")
@@ -138,7 +107,6 @@ timer_s4    = Timer("Energy conservation step")
 timer_s5    = Timer("Solid momentum eq. step")
 timer_s6    = Timer("Lagrange multiplier/fictitious force step")
 timer_s7    = Timer("Solid temperature's lagrange multiplier step")
-
 timer_si    = Timer("Delta_fx_interpolation")
 timer_sm    = Timer("Move solid mesh")
 timer_sr    = Timer("Remesh solid mesh")

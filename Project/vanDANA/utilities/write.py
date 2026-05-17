@@ -1,334 +1,141 @@
-from dolfin import XDMFFile, HDF5File, TimeSeries
+from firedrake import File, CheckpointFile
 from os import path, makedirs, listdir, remove
 from shutil import rmtree
 import io
 
 class write_mesh:
+    def __init__(self, directory, mesh, filename):
+        folder = path.join(directory, "mesh_files/")
+        makedirs(folder, exist_ok=True)
+        # Firedrake usa .pvd (VTK) come standard di visualizzazione
+        self.file = File(folder + filename + ".pvd")
+        self.file.write(mesh)
+        
+    def write_mesh_boundaries(self, boundaries):
+        pass # In Firedrake sono integrati nella mesh o si scrivono le marker functions
 
-	def __init__(self, directory, mesh, filename):
-
-		folder = path.join(directory, "mesh_files/")
-		xdf = XDMFFile(folder + filename + ".xdmf")		
-		xdf.rename(filename, filename)
-		xdf.write(mesh)
-
-		self.xdf = xdf
-		
-	def write_mesh_boundaries(self, boundaries):
-
-		self.xdf.write(boundaries)		
-
-	def write_mesh_subdomains(self, subdomains):
-
-		self.xdf.write(subdomains)
-
+    def write_mesh_subdomains(self, subdomains):
+        pass
 
 class write_mesh_H5:
+    def __init__(self, mpi_comm, directory, mesh, filename):
+        folder = path.join(directory, "restart_variables/")
+        makedirs(folder, exist_ok=True)
+        # Si tiene un riferimento aperto al file di checkpoint
+        self.hdf = CheckpointFile(folder + filename + ".h5", "w", comm=mpi_comm)
+        self.hdf.save_mesh(mesh)
+        self.hdf.close()
+        
+    def write_mesh_H5_boundaries(self, boundaries):
+        pass		
 
-	def __init__(self, mpi_comm, directory, mesh, filename):
+    def write_mesh_H5_subdomains(self, subdomains):
+        pass
 
-		folder = path.join(directory, "restart_variables/")
-		hdf = HDF5File(mpi_comm, folder + filename + ".h5", "w")
-		hdf.write(mesh, "/mesh"); hdf.flush()	
-		self.hdf = hdf
-		
-	def write_mesh_H5_boundaries(self, boundaries):
-		
-		self.hdf.write(boundaries, "/boundaries"); self.hdf.flush()		
-
-	def write_mesh_H5_subdomains(self, subdomains):
-
-		self.hdf.write(subdomains, "/subdomains"); self.hdf.flush()
-
-
-
- 
 def xdmf_file(directory, filename, rewrite_mesh):
-
-	file = XDMFFile(directory + filename + ".xdmf")
-	file.parameters['flush_output'] = True 
-	file.parameters['rewrite_function_mesh'] = rewrite_mesh
-
-	return file 
-
-
-
+    # Ritorna l'handler per i file PVD di Firedrake (sostituto di XDMFFile)
+    return File(directory + filename + ".pvd")
 
 class create_result_folder:
+    def __init__(self, directory, restart, dim, bool_test, suffix=""):
+        folder = path.join(directory, "results" + suffix + "/")
+        if not restart:
+            try:
+                makedirs(folder, exist_ok=True)
+            except OSError:
+                pass 
 
-	def __init__(self, directory, restart, dim, bool_test, suffix=""):
+        self.bool_stream = (dim == 2 and bool_test)
+        self.folder = folder
+        self.restart = restart
 
-		folder = path.join(directory, "results"+suffix+"/")
-		if restart == False:
-			try:
-			    makedirs(folder, exist_ok = True)
-			except OSError:
-			    pass 
+    def create_files(self, files, mpi_comm):
+        xdmf_file_handles = dict()
+        folder_xdmf = path.join(self.folder, "PVD_files/")
+        makedirs(folder_xdmf, exist_ok=True)
 
-		# Boolean parameter for streamfunction/vorticity files
-		bool_stream = False
-		if dim == 2 and bool_test == True:
-			bool_stream = True
+        for i in files:
+            xdmf_file_handles[i] = File(folder_xdmf + i + ".pvd")
 
-		self.folder = folder
-		self.restart = restart
-		self.bool_stream = bool_stream   
+        # In Firedrake non pre-allocchiamo i Checkpoint file qui, 
+        # li apriamo/chiudiamo durante la funzione di salvataggio per evitare corruzioni.
+        hdf5_file_handles = files # Passiamo semplicemente le chiavi
 
-	def create_files(self, files, mpi_comm):
-		
-		xdmf_file_handles = dict(); hdf5_file_handles = dict()
+        return xdmf_file_handles, hdf5_file_handles	
 
-		# --------------------------------
+    def create_text_files(self, text_files, my_rank):	
+        if not self.restart:
+            makedirs(self.folder + "text_files/", exist_ok=True)
 
-		folder_xdmf = path.join(self.folder, "XDMF_files/")
+        text_file_handles = []	
+        for i in text_files:
+            handle = io.TextIOWrapper(open(self.folder + "text_files/" + i + ".txt", "ab+", 0), write_through=True)
+            text_file_handles.append(handle)
 
-		if self.restart == False:
+        if not self.restart and my_rank == 0:
+            for i in text_file_handles:
+                i.truncate(0)
+                i.seek(0)			
 
-			for k in range(250):	
-				nm = 'HDF5_files_' + str(k)			
-				if nm in listdir(self.folder):
-					try:
-						rmtree(path.join(self.folder, nm))
-					except OSError:
-						pass
-				else:
-					break
+        return text_file_handles
 
-			folder_hdf5 = path.join(self.folder, "HDF5_files_0/")
-
-		elif self.restart == True:
-			
-			for k in range(1, 250):	
-				nm = 'HDF5_files_' + str(k)				
-				if nm not in listdir(self.folder):
-					folder_hdf5 = path.join(self.folder, "HDF5_files_" + str(k) + "/")
-					break
-		
-		# --------------------------------			
-
-		# Create XDMF files for visualization output
-		rewrite_mesh = False			
-		for i in files:
-			handle = xdmf_file(folder_xdmf, i, rewrite_mesh)
-			xdmf_file_handles[i]=handle
-
-		# HDF5 files for storing backup data				
-		for j in files:
-			handle = HDF5File(mpi_comm, folder_hdf5 + j + "_.h5", "w")
-			hdf5_file_handles[j]=handle		
-
-		return xdmf_file_handles, hdf5_file_handles	
-
-	def create_text_files(self, text_files, my_rank):	
-
-		if self.restart == False:
-			try:
-			    makedirs(self.folder + "text_files/", exist_ok = True)
-			except OSError:
-			    pass
-
-		text_file_handles = []	
-		
-		# Create txt files for post-processing data
-		for i in text_files:
-			handle = io.TextIOWrapper(open(self.folder + "text_files/" + i + ".txt", "ab+", 0), write_through=True)
-			text_file_handles.append(handle)
-
-		if self.restart == False and my_rank == 0:
-			for i in text_file_handles:
-				i.truncate(0); i.seek(0)			
-
-		return text_file_handles
-
-	def write_header_text_files(self, text_file_handles, my_rank):
-
-		if self.restart == False and my_rank == 0:
-			text_file_handles[0].write("#Time		#Drag			#Lift\n")
-			text_file_handles[1].write("#Time             #Timestep         #PISO velocity_error     #Max cell_Re         #Max Convection_CFL  #Max Viscous_CFL     #Max Conduction_CFL\n")
-			try:
-				text_file_handles[4].write("#Time		#Average_nusselt_no.\n")
-				text_file_handles[5].write("#Time		#Drag			#Lift			#Volume\n")
-				text_file_handles[6].write("#Time		#Drag			#Lift\n")
-				text_file_handles[7].write("#Time		#Radius_ratio min	#Radius_ratio max\n")
-				text_file_handles[8].write("#Time		#Average_nusselt_no.\n")
-			except:
-				pass	
-
-	def heat_write_header_text_files(self, text_file_handles, my_rank):
-
-		if self.restart == False and my_rank == 0:
-			text_file_handles[0].write("Time, iter, Tincr, errConstraint, L2error\n")
-			text_file_handles[1].write("#Time             #Timestep         #PISO velocity_error     #Max cell_Re         #Max Convection_CFL  #Max Viscous_CFL     #Max Conduction_CFL\n")
-
-
-def write_time_series(directory, restart):
-
-	folder = path.join(directory, "mesh_files/")
-
-	if restart == False:
-		for k in range(0, 250):
-			nm = 'time_series_solid_current_mesh_' + str(k) + '.h5'			
-			if nm in listdir(folder):
-				try:
-					remove(path.join(folder, nm))
-					rmtree(path.join(folder, 'time_series_solid_current_mesh'))
-				except OSError:
-					pass
-			else:
-				break
-
-		file = path.join(folder, "time_series_solid_current_mesh_0")		
-
-	elif restart == True:
-		for k in range(1, 250):	
-			nm = 'time_series_solid_current_mesh_' + str(k) + '.h5'				
-			if nm not in listdir(folder):
-				file = path.join(folder, "time_series_solid_current_mesh_" + str(k))
-				break
-
-	timeseries = TimeSeries(file)
-	return timeseries
-
-
+    def write_header_text_files(self, text_file_handles, my_rank):
+        if not self.restart and my_rank == 0:
+            text_file_handles[0].write("#Time		#Drag			#Lift\n")
+            text_file_handles[1].write("#Time             #Timestep         #PISO velocity_error     #Max cell_Re         #Max Convection_CFL  #Max Viscous_CFL     #Max Conduction_CFL\n")
+            try:
+                text_file_handles[4].write("#Time		#Average_nusselt_no.\n")
+                text_file_handles[5].write("#Time		#Drag			#Lift			#Volume\n")
+                text_file_handles[6].write("#Time		#Drag			#Lift\n")
+                text_file_handles[7].write("#Time		#Radius_ratio min	#Radius_ratio max\n")
+                text_file_handles[8].write("#Time		#Average_nusselt_no.\n")
+            except:
+                pass	
 
 def write_restart_files(directory, Mpi, file_handle, t, tsp, **restart_variables):
+    if Mpi.get_rank() == 0:
+        file_handle.truncate(0)
+        file_handle.seek(0)
+        file_handle.write(f"{t}\n{tsp}")
 
-	if Mpi.my_rank == 0:
-	    file_handle.truncate(0); file_handle.seek(0)
-	    file_handle.write("{}{}{}".format(t, "\n", tsp))
-
-	for key, value in restart_variables.items():
-		y = 0
-		for i in value:
-			y += 1
-			hdf = HDF5File(Mpi.mpi_comm, directory + "restart_variables/" + str(key) + "_variable_" + str(y) + ".h5", "w")
-			hdf.write(i, "/variable", 0); hdf.flush(); del hdf
-
-
+    for key, value in restart_variables.items():
+        y = 0
+        for i in value:
+            y += 1
+            with CheckpointFile(directory + f"restart_variables/{key}_variable_{y}.h5", "w", comm=Mpi.mpi_comm) as hdf:
+                hdf.save_function(i, name="variable")
 
 def write_solution_files(problem_physics, bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables):
+    flow_variables = variables.get('flow', {})
+    solid_variables = variables.get('solid', {})
+    lagrange_variables = variables.get('lagrange', {})
+    
+    u = flow_variables.get('uv')
+    p = flow_variables.get('p_')[0] if 'p_' in flow_variables else None
+    
+    if u is not None:
+        u.rename("velocity")
+        xdmf_file_handles['u'].write(u, time=t)
+    if p is not None:
+        p.rename("pressure")
+        xdmf_file_handles['p'].write(p, time=t)
 
-	for key, value in variables.items():
-		if key == 'flow':
-			flow_variables = variables['flow']
-		if key == 'flow_temp':	
-			flow_temp_variables = variables['flow_temp']
-		if key == 'solid':
-			solid_variables = variables['solid']
-		if key == 'lagrange':
-			lagrange_variables = variables['lagrange']
-		if key == 'solid_temp':
-			solid_temp_variables = variables['solid_temp']
+    if bool_stream:
+        vort = flow_variables.get('vort')
+        psi = flow_variables.get('psi')
+        vort.rename("vorticity")
+        xdmf_file_handles['vorticity'].write(vort, time=t)
+        psi.rename("stream_function")
+        xdmf_file_handles['stream_function'].write(psi, time=t)
 
-	# --------------------------------			
-
-	u = flow_variables['uv']; p = flow_variables['p_'][0]; vort = flow_variables['vort']; psi = flow_variables['psi']
-
-	if problem_physics['solve_temperature'] == True: 
-		T = flow_temp_variables['T_'][0]
-	
-	if problem_physics['solve_FSI'] == True:
-		Dp = solid_variables['Dp_'][0]; Dp_incr = solid_variables['Dp_'][1]; us = solid_variables['us_']; #ps = solid_variables['ps_']; J = solid_variables['J_']
-		Lm = lagrange_variables['Lm_'][0]
-
-	if problem_physics['solve_FSI'] and problem_physics['solve_temperature'] == True:
-		Ts = solid_temp_variables['Ts_'][0]	
-
-	# --------------------------------		
-
-	# Save solution to file (HDF5_)
-
-	hdf5_file_handles['u'].write(u, 'velocity', t); hdf5_file_handles['u'].flush()
-	hdf5_file_handles['p'].write(p, 'pressure', t); hdf5_file_handles['p'].flush()
-	
-	if bool_stream == True:
-		hdf5_file_handles['vorticity'].write(vort, 'vorticity', t); hdf5_file_handles['vorticity'].flush()
-		hdf5_file_handles['stream_function'].write(psi, 'stream_function', t); hdf5_file_handles['stream_function'].flush()
-	
-	if problem_physics['solve_temperature'] == True:
-		hdf5_file_handles['T'].write(T, 'temperature', t); hdf5_file_handles['T'].flush()
-		
-	if problem_physics['solve_FSI'] == True:
-		hdf5_file_handles['Dp'].write(Dp, 'displacement', t); hdf5_file_handles['Dp'].flush()
-		# hdf5_file_handles['Dp_incr'].write(Dp_incr, 'displacementIncrement', t); hdf5_file_handles['Dp_incr'].flush()
-		hdf5_file_handles['us'].write(us, 'velocity_solid', t); hdf5_file_handles['us'].flush()
-		# hdf5_file_handles['ps'].write(ps, 'pressure_solid', t); hdf5_file_handles['ps'].flush()
-		hdf5_file_handles['Lm'].write(Lm, 'lagrange-multiplier', t); hdf5_file_handles['Lm'].flush()
-		# hdf5_file_handles['J'].write(J, 'Jacobian', t); hdf5_file_handles['J'].flush()
-		
-		if problem_physics['solve_temperature'] == True:	    
-			hdf5_file_handles['Ts'].write(Ts, 'temperature_solid', t); hdf5_file_handles['Ts'].flush()		
-
-	# --------------------------------		    	    
-
-	# Save solution to file (XDMF)   
-
-	u.rename('velocity', 'velocity')
-	xdmf_file_handles['u'].write(u, t); xdmf_file_handles['u'].close()
-	p.rename('pressure', 'pressure')
-	xdmf_file_handles['p'].write(p, t); xdmf_file_handles['p'].close()	
-
-	if bool_stream == True:
-	    
-	    vort.rename('vorticity', 'vorticity')
-	    xdmf_file_handles['vorticity'].write(vort, t); xdmf_file_handles['vorticity'].close()
-	    psi.rename('streamfunction', 'stream_function')			    
-	    xdmf_file_handles['stream_function'].write(psi, t); xdmf_file_handles['stream_function'].close()
-
-	if problem_physics['solve_temperature'] == True:
-		T.rename('temperature', 'temperature')
-		xdmf_file_handles['T'].write(T, t); xdmf_file_handles['T'].close()
-	   
-	if problem_physics['solve_FSI'] == True:
-		Dp.rename('displacement', 'displacement')
-		xdmf_file_handles['Dp'].write(Dp, t); xdmf_file_handles['Dp'].close()
-		# Dp_incr.rename('displacement_incr', 'displacement_incr')
-		# xdmf_file_handles['Dp_incr'].write(Dp_incr, t); xdmf_file_handles['Dp_incr'].close()
-		us.rename('velocity_solid', 'velocity_solid')
-		xdmf_file_handles['us'].write(us, t); xdmf_file_handles['us'].close()
-		# ps.rename('pressure_solid', 'pressure_solid')
-		# xdmf_file_handles['ps'].write(ps, t); xdmf_file_handles['ps'].close()
-		Lm.rename('lagrange-multiplier', 'lagrange-multiplier')
-		xdmf_file_handles['Lm'].write(Lm, t); xdmf_file_handles['Lm'].close()
-		# J.rename('Jacobian', 'Jacobian')
-		# xdmf_file_handles['J'].write(J, t); xdmf_file_handles['J'].close()	
-		
-		if problem_physics['solve_temperature'] == True:	
-			Ts.rename('temperature_solid', 'temperature_solid')
-			xdmf_file_handles['Ts'].write(Ts, t); xdmf_file_handles['Ts'].close()
-
-def heat_write_solution_files(problem_physics, bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables):
-
-	for key, value in variables.items():
-		if key == 'heat':
-			temperature_variables = variables['heat']
-		if key == 'lagrange':
-			lagrange_variables = variables['lagrange']
-
-	# --------------------------------			
-
-	T = temperature_variables['T_'][0]
-	Lm = lagrange_variables['Lm_'][0]
-	T1 = temperature_variables['T_'][1]
-	Lm1 = lagrange_variables['Lm_'][1]
-
-	# --------------------------------		
-
-	# Save solution to file (HDF5_)
-
-	hdf5_file_handles['T'].write(T, 'temperature', t); hdf5_file_handles['T'].flush()		
-	hdf5_file_handles['To'].write(T1, 'temperature_old', t); hdf5_file_handles['To'].flush()		
-	hdf5_file_handles['Lm'].write(Lm, 'lagrange-multiplier', t); hdf5_file_handles['Lm'].flush()
-	hdf5_file_handles['DL'].write(Lm1, 'lagrange-multiplier-incr', t); hdf5_file_handles['DL'].flush()
-
-	# --------------------------------		    	    
-
-	# Save solution to file (XDMF)   
-	T.rename('temperature', 'temperature')
-	xdmf_file_handles['T'].write(T, t); xdmf_file_handles['T'].close()	   
-	T1.rename('T_old', 'T_old')
-	xdmf_file_handles['To'].write(T1, t); xdmf_file_handles['To'].close()	   
-	Lm.rename('lagrange-multiplier-incr', 'lagrange-multiplier-incr')
-	xdmf_file_handles['DL'].write(Lm, t); xdmf_file_handles['DL'].close()
-	Lm1.rename('lagrange-multiplier', 'lagrange-multiplier')
-	xdmf_file_handles['Lm'].write(Lm1, t); xdmf_file_handles['Lm'].close()
+    if problem_physics['solve_FSI']:
+        Dp = solid_variables.get('Dp_')[0]
+        us = solid_variables.get('us_')
+        Lm = lagrange_variables.get('Lm_')[0]
+        
+        Dp.rename("displacement")
+        xdmf_file_handles['Dp'].write(Dp, time=t)
+        us.rename("velocity_solid")
+        xdmf_file_handles['us'].write(us, time=t)
+        Lm.rename("lagrange-multiplier")
+        xdmf_file_handles['Lm'].write(Lm, time=t)
