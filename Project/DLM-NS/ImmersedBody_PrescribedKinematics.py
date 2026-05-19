@@ -26,7 +26,8 @@ def NS_DLM_Solver(args):
     corrective_step = False
 
     curr_dir = os.path.dirname(os.path.abspath(__file__)) + '/'
-    remove_killvanDANA(curr_dir); remove_complete(curr_dir)
+    remove_killvanDANA(curr_dir)
+    remove_complete(curr_dir)
 
     # MPI-initialize / terminal printing controls
     Mpi = MPI_Manage()

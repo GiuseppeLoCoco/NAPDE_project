@@ -1,9 +1,11 @@
 from firedrake import *
+from domain_settings import *
+from time import time
 import numpy as np
 import os
 import argparse
 from matplotlib import pyplot as plt
-from math import pi as PI
+from math import cos, pi as PI
 
 from obstacles import circleObstacle
 
@@ -23,7 +25,13 @@ class Brinkman_solver:
         self.moving = moving
 
     def Brinkman_solve(self, args=None):
-        ########## DATA AND SOLVER
+
+        # start total timer
+        t_start = time()
+
+        # ==================================
+        # DATA AND SOLVER
+        # ==================================
 
         tol = 1e-10
 
@@ -34,24 +42,24 @@ class Brinkman_solver:
         n = 50
 
         if self.conforming:
-            mesh = generate_conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
+            mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
 
         else:
-            mesh = RectangleMesh(n, n//3, Lx, Ly)
+            mesh = RectangleMesh(n, n/3, Lx, Ly)
 
         # Data
         T_end = 10.0            # final time
-        num_steps = 20    # number of time steps
-        dt = T_end / num_steps # time step size
-        mu = 0.1         # dynamic viscosity
-        rho = 1            # density
+        num_steps = 20          # number of time steps
+        dt = T_end / num_steps  # time step size
+        mu = 0.1                # dynamic viscosity
+        rho = 1                 # density
 
         f  = Constant((0, 0))
         t = Constant(0.0)
 
         # Coordinates for expressions
         x, y = SpatialCoordinate(mesh)
-        inflow_profile = as_vector(((1.0-exp(-t)) * 4.0*y*(1.0 - y), 0.0))
+        inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0*y*(1.0 - y), 0.0))
 
         R = n*20
         if self.conforming:
@@ -94,6 +102,7 @@ class Brinkman_solver:
         else:
             w = Constant((0.0, 0.0))
 
+        # Navier-Stokes variational Problem with Brinkman penalization
         a = Constant(rho)/Constant(dt)*inner(u, v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
               + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
@@ -145,19 +154,15 @@ class Brinkman_solver:
             t.assign(t_val)
 
             current_us_x = float(assemble(obstacle.us_x * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
+
+            # Current Position of the cylinder
+            amplitude = 12 * r_obs
+            displ_x = amplitude * 0.5 * (1 - cos(0.2 * PI * t))
+            xc = obstacle.x_obs + displ_x
+            yc = obstacle.y_obs
     
-
             if self.conforming and self.moving:
-                # Recover the space of the coordinates
-                V_coord = mesh.coordinates.function_space()
-
-                # Define the displacement
-                v_x = float(obstacle.us_x) if not hasattr(obstacle.us_x, 'assign') else obstacle.us_x
-                v_y = float(obstacle.us_y) if not hasattr(obstacle.us_y, 'assign') else obstacle.us_y
-
-                # Rigid displacement of the whole mesh
-                displacement = interpolate(as_vector([v_x * dt, v_y * dt]), V_coord)
-                mesh.coordinates.assign(mesh.coordinates + displacement)
+                mesh = conforming_mesh(Lx, Ly, xc, yc, r_obs, n)
 
 
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
@@ -172,6 +177,9 @@ class Brinkman_solver:
 
             # Print max velocity
             print('\tu max:', uh.dat.data.max())
+
+        wall_time = time() - t_start
+        print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes Brinkman solver script')

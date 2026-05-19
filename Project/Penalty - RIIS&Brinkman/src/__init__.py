@@ -6,3 +6,4 @@ from .prescribed_kinematics import *
 from .lagrange_variational_problem import *
 from .delta_interpolation import fsi_interpolation_code
 from .fem_stabilizations import *
+from .domain_settings import *
