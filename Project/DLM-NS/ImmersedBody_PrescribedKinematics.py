@@ -16,21 +16,48 @@ from symtable import Function
 
 def NS_DLM_Solver(args):
 
-    # Start the timer to check the total runtime of the solver in order to compare
-    # it with the runtime of the conforming case (without DLM and with remeshing)
-    start_time = time.time() 
+    timer_total.start()
+
+    # --------------------------------
 
     fem_degree.update({"velocity_degree": args.velocity_degree})
+
+    keep_solid_on_reference = False
+    corrective_step = False
+
+    curr_dir = os.path.dirname(os.path.abspath(__file__)) + '/'
+    remove_killvanDANA(curr_dir); remove_complete(curr_dir)
+
+    # MPI-initialize / terminal printing controls
+    Mpi = MPI_Manage()
+
+    blockPrint()
+    if Mpi.get_rank() == 0: enablePrint()
+
+    print(BLUE % "\nFEM stabilizations = {}".format(str([k for k, 
+        v in stabilization_parameters.items() if v == True])), flush = True)
                       
     # --------------------------------
     # Create meshes for fluid and solid (for DLM) domains
     # --------------------------------
 
-    fluid_mesh = RectangularMesh(nx=nx_fluid, ny=ny_fluid, Lx=Lx_fluid,
-                                 Ly=Ly_fluid, quadrilateral = True)
-    solid_mesh = Mesh("solid_mesh.msh")
+    fluid_mesh = create_fluid_mesh()
+    solid_mesh = create_solid_mesh()
 
+    hmax_f = Mpi.Max(fluid_mesh.mesh.hmax())
+    hmin_f = Mpi.Min(fluid_mesh.mesh.hmin())
+    hmax_s = Mpi.Max(solid_mesh.mesh.hmax()) 
+    hmin_s = Mpi.Min(solid_mesh.mesh.hmin())
+
+    # Problem dimension
     dim = fluid_mesh.geometric_dimension()
+
+    # --------------------------------
+
+    print("\nFluid mesh specs | edge length: Max =",hmax_f, "; Min =",hmin_f, flush = True)
+    print("\nSolid mesh specs | edge length: Max =",hmax_s, "; Min =",hmin_s, flush = True)
+
+    # --------------------------------
 
     # ================================
 
@@ -44,6 +71,7 @@ def NS_DLM_Solver(args):
     # --------------------------------
 
     # Time step setting
+    Mpi.set_barrier()
     tsp = dt = time_control['dt']
     T = time_control['T']
     dt = Constant(dt)
@@ -127,6 +155,25 @@ def NS_DLM_Solver(args):
     # Initialize the time
     t = 0.0
 
+    # Enter number of counters required
+    counters = create_counters(5) 
+    s1, s2, s3, s4, si, sr, s_dt = [0.0 for _ in range(10)]
+
+    timeseries = write_time_series(result_folder.folder, restart)
+
+    """
+    # Output/write meshes
+    pv1 = write_mesh(result_folder.folder, fluid_mesh.mesh, "fluid_mesh")
+    pv1.write_mesh_boundaries(fluid_mesh.get_mesh_boundaries())
+
+    timeseries = write_time_series(result_folder.folder, restart)
+
+    filename = "solid_reference_mesh"
+    if restart == True:	filename = "solid_restart_mesh"
+
+    pv = write_mesh(result_folder.folder, solid_mesh.mesh, filename)
+    """ 
+
     # Output files for the solutions
     files = ['u', 'p']
     text_files = ['flow_data', 'runtime_stats', 'restart', 'log_info']
@@ -148,7 +195,7 @@ def NS_DLM_Solver(args):
 
     # Calculate total Degrees of Freedom
     DOFS_variables = dict(velocity = [u_[0][ui] for ui in range(u_components)], pressure = [p_[0]])
-    DOFS_variables.update(displacement = [Dp_[1]], lagrange_multiplier = [Lm_[0]])
+    DOFS_variables.update(lagrange_multiplier = [Lm_[0]])
 
     DOFS = Calc_total_DOF(Mpi, **DOFS_variables)
     print(GREEN % 'DOFs = {}'.format(DOFS), "\n", flush = True)
@@ -158,6 +205,8 @@ def NS_DLM_Solver(args):
     # Update temporal variables
     update = [u_, p_]
     update.extend([Lm_])
+
+    print(RED % 'Start Simulatons : t = {}'.format(t), "\n", flush = True)
 
     # ================================
 
@@ -171,12 +220,11 @@ def NS_DLM_Solver(args):
 
             try: 	
 
-                print(RED % "\nTime = {}", t, flush = True)
-
                 # Start the timer to check the runtime of each time step
                 timer_dt.start()
 
                 # Update time step
+                update_counter(counters)
                 t += tsp
 
                 # Create the counding box of the solid mesh for the interpolation
@@ -197,16 +245,20 @@ def NS_DLM_Solver(args):
 
                 print(BLUE % "1: Predict tentative velocity step", flush = True)
                 # Assemble and solve the problem of the tentative velocity step
+                timer_s1.start()
                 A1, b1 = flow.assemble_tentative_velocity(u_, p_, Lm_f, dt)
                 flow.solve_tentative_velocity(A1, u_[0], b1, bcs['velocity'])
+                s1 += timer_s1.stop()
 
                 # ================================
 
                 print(BLUE % "2: Pressure correction step", flush = True)
                 # Assemble and solve the problem of the pressure correction
+                timer_s2.start()
                 A2, b2 = flow.assemble_pressure_correction(u_, Lm_f, dt)
                 flow.solve_pressure_correction(A2, p_[0], b2, bcs['pressure'])
-                
+                s2 += timer_s2.stop()
+
                 # ================================
 
                 # Create the velocity vector
@@ -214,21 +266,30 @@ def NS_DLM_Solver(args):
 
                 # Interpolate the velocity on the solid mesh in order to obtain 
                 # the new Lagrange multiplier lambda(n+1)
+                timer_si.start()
                 uf_.assign(interpolate_nonmetching_mesh_delta(fsi_interpolation, uv, "S"))
+                si += timer_si.stop()
 
                 # Update the solid position 
                 solid.update_solid(solid_mesh.mesh, t, dt)
 
-                print(BLUE % "6: Lagrange multiplier (fictitious force) step", flush = True)
+                print(BLUE % "3: Lagrange multiplier (fictitious force) step", flush = True)
                 # Assemble and solve the problem of the Lagrange multiplier step
+                timer_s3.start()
                 a3, b3 = lagrange.assemble_lagrange_multiplier(Lm_, us_, uf_, dt)
                 lagrange.solve_lagrange_multiplier(a3, Lm_[0], b3)
+                s3 += timer_s3.stop()
+
+                # ================================
 
                 # The final corrective step for velocity
                 Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
                 Lm_f_old.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
                 bDLM = flow.assemble_velocity_correction_DLM(u_[0], Lm_f, Lm_f_old, dt)
+                print(BLUE % "4: Velocity correction step", flush = True)
+                timer_s4.start()
                 flow.solve_velocity_correction(u_[0], bDLM, bcs['velocity'])
+                s4 += timer_s4.stop()
 
                 # ================================
 
@@ -250,7 +311,7 @@ def NS_DLM_Solver(args):
                     reset_counter(counters, 0); Mpi.set_barrier()
                     print(BLUE % "File printing in progress --- Simulation run time : {} , Wall time elapsed : {} sec".format(t, timer_total.elapsed()[0]), flush = True)
 
-                    # vort, psi = flow.calc_vorticity_streamfunction(uv, bcs['streamfunction'])
+                    vort, psi = flow.calc_vorticity_streamfunction(uv, bcs['streamfunction'])
 
                     write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
 
@@ -290,8 +351,8 @@ def NS_DLM_Solver(args):
                 # ----------------------------------
 
                 # Check for killvanDANA file
-                if os.path.isfile(path.join(result_folder.folder, "killvanDANA")) == True:
-                    print(RED % "--- killing vanDANA solver --- t = {}".format(t), "\n", flush = True)
+                if os.path.isfile(path.join(result_folder.folder, "NSwithDLM")) == True:
+                    print(RED % "--- killing NSwithDLM solver --- t = {}".format(t), "\n", flush = True)
                     break
 
     # ================================
@@ -301,13 +362,16 @@ def NS_DLM_Solver(args):
     finally:
 
         if t >= T and Mpi.get_rank() == 0:
-            print(BLUE % '\nvanDANA solver - COMPLETED : t = {}'.format(t), "\n", flush = True)
+            print(BLUE % '\nNS with DLM solver - COMPLETED : t = {}'.format(t), "\n", flush = True)
             complete = io.TextIOWrapper(open(result_folder.folder + "complete", "wb", 0), write_through=True)
             complete.seek(0); complete.write("{}, T = {}".format("COMPLETED", T))
             complete.close()
-
+        
+        """
         memory('Final memory use')
         print(RED % 'Total memory usage of solver = {} MB (RSS)'.format(str(memory.memory - initial_memory_use)), "\n", flush = True)
+        """
+
         wall_time = timer_total.stop()
 
         Mpi.set_barrier()
