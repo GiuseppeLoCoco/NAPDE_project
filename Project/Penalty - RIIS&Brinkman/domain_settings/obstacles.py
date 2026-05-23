@@ -1,100 +1,125 @@
-from __future__ import print_function
 from firedrake import *
-
 import numpy as np
 from math import pi as PI
 
-# Define circular obstacle, its signed distance function, and feature functions for Brinkman (in the circle) and RIIS (on the circumference)
+# Define circular obstacle
 class circleObstacle:
-
-  # Create obstacle
   def __init__(self, x, y, r, riis_epsilon=0.05):
-    # initial position
-    self.x = x
-    self.y = y
+    self.x_obs = x
+    self.y_obs = y
     self.r = r
-
-    # RIIS half-thickness
     self.eps = riis_epsilon
+    self.amplitude = 12 * self.r
 
-    # displacement
-    self.amplitude = 12*self.r
-    self.displ_x = f'({self.amplitude}*0.5*(1 - cos(0.2*{PI}*t)))'
-    self.displ_y = '0'
-    self.us_x = f'({self.amplitude}*0.1*{PI}*sin(0.2*{PI}*t))'
-    self.us_y = '0'
+  def displ_x(self, t):
+    from firedrake import cos, pi
+    return self.amplitude * 0.5 * (1.0 - cos(0.2 * pi * t))
 
-  # Signed distance function
-  # def dist(self, x):
-  #   return np.sqrt((x[0]-(self.x+self.displ_x(self.t)))**2 + (x[1]-(self.y+self.displ_y(self.t)))**2) - self.r
-  def distStr(self):
-    return f'sqrt( (x[0]-({self.x}+'+self.displ_x+f'))*(x[0]-({self.x}+'+self.displ_x+f')) + (x[1]-({self.y}+'+self.displ_y+f'))*(x[1]-({self.y}+'+self.displ_y+f')) ) - {self.r}'
-  def distExpr(self, t=0):
-    return Expression(self.distStr(),degree=2, t=t)
-  def distFun(self, t=0):
-    return interpolate(self.distExpr(t),FunctionSpace(mesh,'P',2))
+  def displ_y(self, t):
+    return Constant(0.0)
 
-  # Brinkman characteristic function
-  def chi(self, t=0):
-    return Expression('('+self.distStr()+') < 0', degree=2, t=t)
+  def us_x(self, t):
+    from firedrake import sin, pi
+    return self.amplitude * 0.1 * pi * sin(0.2 * pi * t)
 
-  # RIIS delta function
-  def delta(self, t=0):
-    return Expression(f'(1+cos({PI}*('+self.distStr()+f')/{self.eps}))/(2*{self.eps}) * (abs('+self.distStr()+f') < {self.eps})', degree=2, t=t)
+  def us_y(self, t):
+    return Constant(0.0)
 
+  def distExpr(self, mesh, t):
+    X = SpatialCoordinate(mesh)
+    return sqrt((X[0] - (self.x_obs + self.displ_x(t)))**2 + (X[1] - (self.y_obs + self.displ_y(t)))**2) - self.r
 
-# Define segment obstacle (codimension=1), its absolute distance function, and feature functions for RIIS
+  def chi(self, mesh, t):
+    dist = self.distExpr(mesh, t)
+    return conditional(dist < 0, 1.0, 0.0)
+
+  def delta(self, mesh, t):
+    from firedrake import pi, cos, abs
+    dist = self.distExpr(mesh, t)
+    return conditional(abs(dist) < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+
+# Define segment obstacle
 class lineObstacle:
-
-  # Create obstacle
-  def __init__(self, xA, yA, xB, yB, riis_epsilon):
-    # initial position
+  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
     self.A_init = [xA, yA]
     self.B_init = [xB, yB]
     self.length = np.linalg.norm(np.array(self.A_init)-np.array(self.B_init))
-
-    # RIIS half-thickness
     self.eps = riis_epsilon
+    self.amplitude = 3 * self.length
 
-    # displacement
-    self.amplitude = 3*self.length
-    self.displ_x = f'({self.amplitude}*0.5*(1-cos(2*{PI}*t)))'
-    self.displ_y = '0'
-    self.A = [f'({self.A_init[0]}+{self.displ_x})', f'({self.A_init[1]}+{self.displ_y})']
-    self.B = [f'({self.B_init[0]}+{self.displ_x})', f'({self.B_init[1]}+{self.displ_y})']
-    self.us_x = f'({self.amplitude}*{PI}*sin(2*{PI}*t))'
-    self.us_y = '0'
+  def displ_x(self, t):
+    from firedrake import cos, pi
+    return self.amplitude * 0.5 * (1.0 - cos(2.0 * pi * t))
+  
+  def displ_y(self, t):
+    return Constant(0.0)
+    
+  def A(self, t):
+    return [self.A_init[0] + self.displ_x(t), self.A_init[1] + self.displ_y(t)]
 
-  # Positive distance function
-  def distStr(self):
-    # First, we identify the projection of a generic point 'x' onto the line of the segment [A, B] -> 'abscissa' is its parametric coordinate, with abscissa=0,1 for A,B, respectively.
-    abscissa = f'( (x[0]-{self.A[0]})*({self.B[0]}-{self.A[0]}) + (x[1]-{self.A[1]})*({self.B[1]}-{self.A[1]}) ) / {self.length**2}'
-    # Then, we put thresholds on the abscissa.
-    abscissa_thresh = f'( ({abscissa}) < 0 ? 0 : ( ({abscissa}) > 1 ? 1 : ({abscissa}) ) )'
-    # Finally, the closest point to 'x' on the segment is A+abscissa_thresh*(B-A).   (see note above on the displacement)
-    point_x = f'( {self.A[0]} + {abscissa_thresh}*(({self.B[0]}-{self.A[0]})) )'
-    point_y = f'( {self.A[1]} + {abscissa_thresh}*(({self.B[1]}-{self.A[1]})) )'
-    return f'sqrt( (x[0]-{point_x})*(x[0]-{point_x}) + (x[1]-{point_y})*(x[1]-{point_y}) )'
-  def distExpr(self, t=0):
-    return Expression(self.distStr(),degree=2, t=t)
-  def distFun(self, t=0):
-    return interpolate(self.distExpr(t),FunctionSpace(mesh,'P',2))
+  def B(self, t):
+    return [self.B_init[0] + self.displ_x(t), self.B_init[1] + self.displ_y(t)]
 
-  # RIIS delta function
-  def delta(self, t=0):
-    return Expression(f'(1+cos({PI}*('+self.distStr()+f')/{self.eps}))/(2*{self.eps}) * (abs('+self.distStr()+f') < {self.eps})', degree=2, t=t)
+  def us_x(self, t):
+    from firedrake import sin, pi
+    return self.amplitude * pi * sin(2.0 * pi * t)
 
+  def us_y(self, t):
+    return Constant(0.0)
 
-# Segment rotating counterclockwise around its endpoint A.
+  def distExpr(self, mesh, t):
+    X = SpatialCoordinate(mesh)
+    A_t = self.A(t)
+    B_t = self.B(t)
+    abscissa = ((X[0] - A_t[0]) * (B_t[0] - A_t[0]) + (X[1] - A_t[1]) * (B_t[1] - A_t[1])) / (self.length**2)
+    abscissa_thresh = conditional(abscissa < 0, 0.0, conditional(abscissa > 1, 1.0, abscissa))
+    point_x = A_t[0] + abscissa_thresh * (B_t[0] - A_t[0])
+    point_y = A_t[1] + abscissa_thresh * (B_t[1] - A_t[1])
+    return sqrt((X[0] - point_x)**2 + (X[1] - point_y)**2)
+
+  def chi(self, mesh, t):
+    dist = self.distExpr(mesh, t)
+    return conditional(dist < 0, 1.0, 0.0)
+
+  def delta(self, mesh, t):
+    from firedrake import pi, cos, abs
+    dist = self.distExpr(mesh, t)
+    return conditional(abs(dist) < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+
+# Segment rotating counterclockwise
 class rotatingLineObstacle(lineObstacle):
-  # Create obstacle
-  def __init__(self, xA, yA, xB, yB, riis_epsilon):
+  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
     super().__init__(xA, yA, xB, yB, riis_epsilon)
-    self.theta_max = PI/4.0
-    theta = f'( 0-0.5*(1-cos(2*{PI}*t))*{self.theta_max} )'
-    dottheta = f'( -{PI}*sin(2*{PI}*t)*{self.theta_max} )'
-    self.A = self.A_init
-    self.B = [ f'( {self.A[0]} + ({self.B_init[0]}-{self.A[0]})*cos({theta}) - ({self.B_init[1]}-{self.A[1]})*sin({theta}) )',
-              f'( {self.A[1]} + ({self.B_init[0]}-{self.A[0]})*sin({theta}) + ({self.B_init[1]}-{self.A[1]})*cos({theta}) )' ]
-    self.us_x = f'( {dottheta} * ( -({self.B_init[0]}-{self.A[0]})*sin({theta}) - ({self.B_init[1]}-{self.A[1]})*cos({theta}) ) )'
-    self.us_y = f'( {dottheta} * ( ({self.B_init[0]}-{self.A[0]})*cos({theta}) - ({self.B_init[1]}-{self.A[1]})*sin({theta}) ) )'
+    self.theta_max = PI / 4.0
+
+  def theta(self, t):
+    from firedrake import cos, pi
+    return -0.5 * (1.0 - cos(2.0 * pi * t)) * self.theta_max
+  
+  def dottheta(self, t):
+    from firedrake import sin, pi
+    return -pi * sin(2.0 * pi * t) * self.theta_max
+
+  def B(self, t):
+    from firedrake import sin, cos
+    th = self.theta(t)
+    dx = self.B_init[0] - self.A_init[0]
+    dy = self.B_init[1] - self.A_init[1]
+    return [self.A_init[0] + dx * cos(th) - dy * sin(th),
+            self.A_init[1] + dx * sin(th) + dy * cos(th)]
+            
+  def us_x(self, t):
+    from firedrake import sin, cos
+    th = self.theta(t)
+    dt = self.dottheta(t)
+    dx = self.B_init[0] - self.A_init[0]
+    dy = self.B_init[1] - self.A_init[1]
+    return dt * (-dx * sin(th) - dy * cos(th))
+
+  def us_y(self, t):
+    from firedrake import sin, cos
+    th = self.theta(t)
+    dt = self.dottheta(t)
+    dx = self.B_init[0] - self.A_init[0]
+    dy = self.B_init[1] - self.A_init[1]
+    return dt * (dx * cos(th) - dy * sin(th))

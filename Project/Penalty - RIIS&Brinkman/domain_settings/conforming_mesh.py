@@ -1,8 +1,8 @@
-import gmsh
 import numpy as np
 from firedrake import Mesh
 
-def generate_conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n):
+def conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n):
+    import gmsh
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     model = gmsh.model

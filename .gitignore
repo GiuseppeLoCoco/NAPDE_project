@@ -216,3 +216,31 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Simulation outputs (VTK/XDMF/HDF5 and run folders)
+cyl/
+beam/
+results*/
+output*/
+restart_variables/
+time_series_solid_current_mesh*/
+text_files/
+
+# Accidental local files
+python3
+
+*.pvd
+*.vtu
+*.pvtu
+*.vtp
+*.vts
+*.vtk
+*.xdmf
+*.xmf
+*.h5
+*.hdf5
+
+# Keep input meshes/data
+!**/user_inputs/*.vtu
+!**/user_inputs/*.h5
+!**/src/*.h5

@@ -1,4 +1,10 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
+
 from firedrake import *
+from firedrake import VTKFile
 from domain_settings import *
 from time import time
 import numpy as np
@@ -43,7 +49,7 @@ class Brinkman_solver:
             mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
 
         else:
-            mesh = RectangleMesh(n, n/3, Lx, Ly)
+            mesh = RectangleMesh(n, n//3, Lx, Ly)
 
 
         # ==================================
@@ -136,10 +142,10 @@ class Brinkman_solver:
             os.makedirs(basedir)
 
         # Create VTK files for visualization output
-        xdmffile_u = File(basedir+'velocity.pvd')
-        xdmffile_p = File(basedir+'pressure.pvd')
-        xdmffile_phi = File(basedir+'phi.pvd')
-        xdmffile_chi = File(basedir+'chi.pvd')
+        xdmffile_u = VTKFile(basedir+'velocity.pvd')
+        xdmffile_p = VTKFile(basedir+'pressure.pvd')
+        xdmffile_phi = VTKFile(basedir+'phi.pvd')
+        xdmffile_chi = VTKFile(basedir+'chi.pvd')
         file_dict = {'u': xdmffile_u, 'p': xdmffile_p, 'phi': xdmffile_phi, 'chi': xdmffile_chi}
 
         # Time-stepping
@@ -160,7 +166,7 @@ class Brinkman_solver:
             print('t =', t_val)
             t.assign(t_val)
 
-            current_us_x = float(assemble(obstacle.us_x * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
+            current_us_x = float(assemble(obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
 
             # Current Position of the cylinder
             amplitude = 12 * r_obs
