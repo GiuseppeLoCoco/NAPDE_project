@@ -10,16 +10,17 @@ from math import cos, pi as PI
 from obstacles import circleObstacle
 
 def saveVTK(file_dict, t, uh, ph, phi, chi):
-  uh.rename('u','u')
-  ph.rename('p','p')
-  phi.rename('phi','phi')
-  chi.rename('chi','chi')
-  file_dict['u'].write(uh, time=t)
-  file_dict['p'].write(ph, time=t)
-  file_dict['phi'].write(phi, time=t)
-  file_dict['chi'].write(chi, time=t)
+    uh.rename('u','u')
+    ph.rename('p','p')
+    phi.rename('phi','phi')
+    chi.rename('chi','chi')
+    file_dict['u'].write(uh, time=t)
+    file_dict['p'].write(ph, time=t)
+    file_dict['phi'].write(phi, time=t)
+    file_dict['chi'].write(chi, time=t)
 
 class Brinkman_solver:
+
     def __init__(self, conforming=False, moving=True):
         self.conforming = conforming
         self.moving = moving
@@ -30,12 +31,9 @@ class Brinkman_solver:
         t_start = time()
 
         # ==================================
-        # DATA AND SOLVER
+        # CREATE MESH
         # ==================================
 
-        tol = 1e-10
-
-        # Create mesh
         Lx, Ly = 3, 1
         y_obs = 0.5
         r_obs = 0.1
@@ -47,7 +45,12 @@ class Brinkman_solver:
         else:
             mesh = RectangleMesh(n, n/3, Lx, Ly)
 
-        # Data
+
+        # ==================================
+        # DATA AND SOLVER
+        # ==================================
+
+        tol = 1e-10
         T_end = 10.0            # final time
         num_steps = 20          # number of time steps
         dt = T_end / num_steps  # time step size
@@ -63,7 +66,7 @@ class Brinkman_solver:
 
         R = n*20
         if self.conforming:
-          R = 0
+            R = 0
 
         # Define boundaries
         # For RectangleMesh: 1: x=0, 2: x=Lx, 3: y=0, 4: y=Ly
@@ -92,7 +95,7 @@ class Brinkman_solver:
         sol = Function(W)
         uh, ph = sol.subfunctions
 
-        # Define variational problem
+        # Define expressions for Brinkman
         phi_expr = obstacle.distExpr(mesh, t)
         chi_expr = obstacle.chi(mesh, t)
         us_expr = as_vector((obstacle.us_x(t), obstacle.us_y(t)))
@@ -102,7 +105,11 @@ class Brinkman_solver:
         else:
             w = Constant((0.0, 0.0))
 
-        # Navier-Stokes variational Problem with Brinkman penalization
+
+        # ==================================
+        # DEFINE VARIATIONAL PROBLEM
+        # ==================================
+
         a = Constant(rho)/Constant(dt)*inner(u, v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
               + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
@@ -163,7 +170,6 @@ class Brinkman_solver:
     
             if self.conforming and self.moving:
                 mesh = conforming_mesh(Lx, Ly, xc, yc, r_obs, n)
-
 
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
