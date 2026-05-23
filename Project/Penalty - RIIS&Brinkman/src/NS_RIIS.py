@@ -1,12 +1,17 @@
-from firedrake import *
-import numpy as np
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
+
+from firedrake import *
+from firedrake import VTKFile
+import numpy as np
 import argparse
 from domain_settings import *
 from matplotlib import pyplot as plt
 from math import pi as PI
 
-from obstacles import lineObstacle, rotatingLineObstacle
+from obstacles import circleObstacle, lineObstacle, rotatingLineObstacle
 
 
 def saveVTK(file_dict, t, uh, ph, phi, delta):
@@ -32,18 +37,19 @@ class RIIS_solver:
         # Create mesh
         Lx, Ly = 3, 1
         x_obs = 0.5
-        y_obs = 0.5*Ly
+        y_obs = 0.5 * Ly
         n = 200
+        r_obs = 0.1
+        eps = 8.0 / n
 
         if self.conforming:
-            mesh = generate_conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n_elements) //Test using conforming mesh only with cylinder
-            y_obs = 0.5
-            r_obs = 0.1
-            obstacle = circleObstacle(y_obs,y_obs,r_obs)
+            # Test using conforming mesh only with cylinder
+            mesh = conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n)
+            obstacle = circleObstacle(x_obs, y_obs, r_obs)
         else:
             mesh = RectangleMesh(n, n//3, Lx, Ly)
             # Define the obstacle (Using rotatingLine as in the original RIIS code)
-            obstacle = rotatingLineObstacle(x_obs, 0.0,x_obs, y_obs, eps)
+            obstacle = rotatingLineObstacle(x_obs, 0.0, x_obs, y_obs, eps)
 
         
         # Data
@@ -54,12 +60,10 @@ class RIIS_solver:
         rho = 1            # density
 
         # RIIS Penalty Parameters
-        eps = 8.0 / n
-
         if self.conforming:
-            R = Constant(0.0)
+            R = 0.0
         else:
-            R = Constant(1000.0)
+            R = 1000.0
 
         f  = Constant((0, 0))
         t = Constant(0.0)
@@ -131,10 +135,10 @@ class RIIS_solver:
             os.makedirs(basedir)
 
         # Create VTK files for visualization output
-        xdmffile_u = File(basedir+'velocity.pvd')
-        xdmffile_p = File(basedir+'pressure.pvd')
-        xdmffile_phi = File(basedir+'phi.pvd')
-        xdmffile_delta = File(basedir+'delta.pvd')
+        xdmffile_u = VTKFile(basedir+'velocity.pvd')
+        xdmffile_p = VTKFile(basedir+'pressure.pvd')
+        xdmffile_phi = VTKFile(basedir+'phi.pvd')
+        xdmffile_delta = VTKFile(basedir+'delta.pvd')
         file_dict = {'u': xdmffile_u, 'p': xdmffile_p, 'phi': xdmffile_phi, 'delta': xdmffile_delta}
 
         # Time-stepping
@@ -151,19 +155,15 @@ class RIIS_solver:
 
         for step in range(num_steps):
             # Update current time
-            t_val += dt
+            t_val = (step + 1) * dt
             print('t =', t_val)
             t.assign(t_val)
             if self.conforming and self.moving:
                 # Recover the space of the coordinates
                 V_coord = mesh.coordinates.function_space()
 
-                # Define the displacement
-                v_x = float(obstacle.us_x) if not hasattr(obstacle.us_x, 'assign') else obstacle.us_x
-                v_y = float(obstacle.us_y) if not hasattr(obstacle.us_y, 'assign') else obstacle.us_y
-
                 # Rigid displacement of the whole mesh
-                displacement = interpolate(as_vector([v_x * dt, v_y * dt]), V_coord)
+                displacement = interpolate(us_expr * dt, V_coord)
                 mesh.coordinates.assign(mesh.coordinates + displacement)
 
 
@@ -185,5 +185,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Istanziamo la classe e chiamiamo il solver
-    solver = RIIS_solver_class(conforming=False, moving=True)
-    solver.RIIS_solver(args)
+    solver = RIIS_solver(conforming=False, moving=True)
+    solver.RIIS_solve(args)

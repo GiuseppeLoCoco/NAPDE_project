@@ -34,9 +34,10 @@ class circleObstacle:
     return conditional(dist < 0, 1.0, 0.0)
 
   def delta(self, mesh, t):
-    from firedrake import pi, cos, abs
+    from firedrake import pi, cos
     dist = self.distExpr(mesh, t)
-    return conditional(abs(dist) < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+    abs_dist = conditional(dist < 0.0, -dist, dist)
+    return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
 # Define segment obstacle
 class lineObstacle:
@@ -82,9 +83,10 @@ class lineObstacle:
     return conditional(dist < 0, 1.0, 0.0)
 
   def delta(self, mesh, t):
-    from firedrake import pi, cos, abs
+    from firedrake import pi, cos
     dist = self.distExpr(mesh, t)
-    return conditional(abs(dist) < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+    abs_dist = conditional(dist < 0.0, -dist, dist)
+    return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
 # Segment rotating counterclockwise
 class rotatingLineObstacle(lineObstacle):
