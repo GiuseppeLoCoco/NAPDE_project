@@ -50,16 +50,22 @@ class NS_DLM_Solver:
         # Create meshes for fluid and solid (for DLM) domains
         # --------------------------------
 
-        fluid_mesh = create_fluid_mesh()
-        solid_mesh = create_solid_mesh()
+        Lx, Ly = 3, 1
+        y_obs = 0.5
+        r_obs = 0.1
+        n = 50
+
+        # Create the mesh
+        if self.conforming:
+            mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
+        else:
+            fluid_mesh = create_fluid_mesh()
+            solid_mesh = create_solid_mesh()
 
         hmax_f = Max(fluid_mesh.mesh.hmax())
         hmin_f = Min(fluid_mesh.mesh.hmin())
         hmax_s = Max(solid_mesh.mesh.hmax()) 
         hmin_s = Min(solid_mesh.mesh.hmin())
-
-        # Problem dimension
-        dim = fluid_mesh.geometric_dimension()
 
         # --------------------------------
 
@@ -93,16 +99,10 @@ class NS_DLM_Solver:
         # Initialize Flow Variational Problem
         # --------------------------------
 
-        # Create the mesh
-        if self.conforming:
-            mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
-        else:
-            fluid_mesh = create_fluid_mesh()
-            solid_mesh = create_solid_mesh()
-
+        # Problem dimension
         dim = fluid_mesh.mesh.geometric_dimension()
         u_components = dim
-
+        self.u_components = u_components
         # Define function spaces
         V = FunctionSpace(mesh, 'P', fem_degree['velocity_degree'])		  
         Q = FunctionSpace(mesh, 'P', fem_degree['pressure_degree'])		  
@@ -116,6 +116,12 @@ class NS_DLM_Solver:
         q = TestFunction(Q)
         Lm1 = [TrialFunction(Z1.sub(ui)) for ui in range(u_components)]
 
+        self.u1 = u1
+        self.v = v
+        self.p = p
+        self.q = q
+        self.Lm1 = Lm1
+
         variables = dict()
         u_ = []
         p_ = []
@@ -127,14 +133,11 @@ class NS_DLM_Solver:
         Lm_f = Function(Z1)
         Lm_f.assign(0.0)
 
+        f = Constant(tuple([0.0]*dim))
+
         variables.update(u_=u_, uv=uv, p_=p_, Lm_f=Lm_f)	
 
-        # Define boundary conditions
-        bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
-        bcs = [bcu_inflow, bcu_walls]
-
-        A1 = None
+        self.A1 = None
         self.A2 = None
         self.A3 = None
         self.matrix = dict(Mij=None, Kij=None, Cij=None,
@@ -145,6 +148,11 @@ class NS_DLM_Solver:
                            A1_as1=None, A2_as2=None, b1_Ls1=None, A1_SCW1=None, b2=None)
         
         u_ab = as_vector([Function(V) for ui in range(self.u_components)]) 
+
+        self.u_ab = u_ab
+        self.f = f
+        self.dim = dim
+        self.variables = variables
 
         u_solver_params = {
             "ksp_type": tentative_velocity_solver['solver_type'],
@@ -229,6 +237,12 @@ class NS_DLM_Solver:
         variables = dict(variables)
         variables.update(solid=solid_variables, lagrange=lagrange_variables)
 
+        self.us_ = us_
+        self.F = [Y, Z2]
+        self.nx = tensors.unit_vector(0, dim)
+        self.ny = tensors.unit_vector(1, dim)
+        self.dx = Measure("dx", domain=mesh)
+
         # ================================
 
         # Create boundary conditions for the fluid problem
@@ -276,9 +290,9 @@ class NS_DLM_Solver:
         if result_folder.bool_stream == True:
             files.extend(['vorticity', 'stream_function'])
 
-        xdmf_file_handles, hdf5_file_handles = result_folder.create_files(files, Mpi.mpi_comm)
-        text_file_handles = result_folder.create_text_files(text_files, Mpi.my_rank)
-        result_folder.write_header_text_files(text_file_handles, Mpi.my_rank)
+        xdmf_file_handles, hdf5_file_handles = result_folder.create_files(files)
+        text_file_handles = result_folder.create_text_files(text_files)
+        result_folder.write_header_text_files(text_file_handles)
 
         write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
 
@@ -290,7 +304,7 @@ class NS_DLM_Solver:
         DOFS_variables = dict(velocity = [u_[0][ui] for ui in range(u_components)], pressure = [p_[0]])
         DOFS_variables.update(lagrange_multiplier = [Lm_[0]])
 
-        DOFS = Calc_total_DOF(Mpi, **DOFS_variables)
+        DOFS = Calc_total_DOF(**DOFS_variables)
         print(GREEN % 'DOFs = {}'.format(DOFS), "\n", flush = True)
 
         # ---------------------------------
@@ -404,7 +418,7 @@ class NS_DLM_Solver:
                         reset_counter(counters, 0);
                         print(BLUE % "File printing in progress --- Simulation run time : {} , Wall time elapsed : {} sec".format(t, timer_total.elapsed()[0]), flush = True)
 
-                        vort, psi = flow.calc_vorticity_streamfunction(uv, bcs['streamfunction'])
+                        vort, psi = self.calc_vorticity_streamfunction(uv, bcs['streamfunction'])
 
                         write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
 
@@ -419,7 +433,9 @@ class NS_DLM_Solver:
                     if counters[4] >= print_control['e']:
 
                         reset_counter(counters, 4)
-                        tsp = calc_runtime_stats_timestep(problem_physics, u_[0], u_components, u_diff, t, tsp, text_file_handles, fluid_mesh.mesh, hmin_f, flow.h_f_X, Re, np.nan, np.nan, flow.VN_local, time_control)
+                        tsp = calc_runtime_stats_timestep(problem_physics, u_[0], u_components, 
+                                                          u_diff, t, tsp, text_file_handles, fluid_mesh.mesh, 
+                                                          hmin_f, flow.h_f_X, Re, np.nan, np.nan, flow.VN_local, time_control)
                         dt  = Constant(tsp)
 
                     # ----------------------------------
@@ -546,6 +562,22 @@ class NS_DLM_Solver:
     def solve_lagrange_multiplier(self, A, x, b):
         # Parametri equivalenti a 'bicgstab' + 'sor' in PETSc
         solve(A, x, b, solver_parameters={'ksp_type': 'bicgstab', 'pc_type': 'sor'})
+
+    def calc_vorticity_streamfunction(self, u, bcs):
+        p = self.p; q = self.q; dx = self.dx
+        vort = self.variables['vort']
+        psi = self.variables['psi']
+
+        if self.bool_stream:
+            a = p * q * dx
+            L = (u[0].dx(1) - u[1].dx(0)) * q * dx
+            solve(a == L, vort, solver_parameters={'ksp_type': 'gmres', 'pc_type': 'hypre'})
+
+            a = inner(grad(p), grad(q)) * dx
+            L = vort * q * dx
+            solve(a == L, psi, bcs=bcs, solver_parameters={'ksp_type': 'gmres', 'pc_type': 'hypre'})
+
+        return vort, psi
         
 
 if __name__ == '__main__':
