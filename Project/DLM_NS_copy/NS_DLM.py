@@ -1,7 +1,7 @@
 from firedrake import *
-from utilities import *
+from domain_settings import *
 from user_inputs import *
-from common import *
+from interpolation import *
 from time import time
 import vtk_py3 as vtk_py3
 import numpy as np
@@ -13,17 +13,6 @@ import inspect
 from ast import Constant
 from symtable import Function
 
-"""
-def saveVTK(file_dict, t, uh, ph, phi, chi):
-    uh.rename('u','u')
-    ph.rename('p','p')
-    phi.rename('phi','phi')
-    chi.rename('chi','chi')
-    file_dict['u'].write(uh, time=t)
-    file_dict['p'].write(ph, time=t)
-    file_dict['phi'].write(phi, time=t)
-    file_dict['chi'].write(chi, time=t)
-"""
 
 def saveVTK(file_dict, t, uh, ph, phi=None, chi=None):
     uh.rename('u', 'u')
@@ -101,7 +90,7 @@ class NS_DLM_Solver:
         dt = Constant(dt)
         # See better this part (may need some not-yet-defined functions)
 
-        print(RED % "\nInitial time_step = {}".format(tsp), flush = True)
+        print("\nInitial time_step = {}".format(tsp), flush = True)
 
         # ================================
 
@@ -182,17 +171,13 @@ class NS_DLM_Solver:
         self.variables = variables
 
 
-        u_solver_params = {
+        self.u_solver_params = {
             "ksp_type": tentative_velocity_solver['solver_type'],
             "pc_type": tentative_velocity_solver['preconditioner_type']
         }
 
-        p_solver_params = {
-            "ksp_type": pressure_correction_solver['solver_type'],
-            "pc_type": pressure_correction_solver['preconditioner_type']
-        }
-
-        u_c_solver_params = {
+    
+        self.u_c_solver_params = {
             "ksp_type": velocity_correction_solver['solver_type'],
             "pc_type": velocity_correction_solver['preconditioner_type']
         }
@@ -308,7 +293,7 @@ class NS_DLM_Solver:
         saveVTK(file_dict, t, uv, p_[0])
         solid_mesh_file.write(solid_mesh.mesh, time=t)
 
-        print(RED % "Total time = {}".format(T), "\n", flush = True)
+        print("Total time = {}".format(T), "\n", flush = True)
 
         # ---------------------------------
 
@@ -317,7 +302,7 @@ class NS_DLM_Solver:
         DOFS_variables.update(lagrange_multiplier = [Lm_[0]])
 
         DOFS = Calc_total_DOF(**DOFS_variables)
-        print(GREEN % 'DOFs = {}'.format(DOFS), "\n", flush = True)
+        print('DOFs = {}'.format(DOFS), "\n", flush = True)
 
         # ---------------------------------
 
@@ -325,7 +310,7 @@ class NS_DLM_Solver:
         update = [u_, p_]
         update.extend([Lm_])
 
-        print(RED % 'Start Simulatons : t = {}'.format(t), "\n", flush = True)
+        print('Start Simulatons : t = {}'.format(t), "\n", flush = True)
 
         # ================================
 
@@ -362,9 +347,8 @@ class NS_DLM_Solver:
 
                     # ----------------------------------
 
-                    print(BLUE % "1: Predict tentative velocity step", flush = True)
-                    # Assemble and solve the problem of the tentative velocity step
-                    timer_s1.start()
+                    print("1: Predict tentative velocity step", flush = True)
+                    # Assemble and solve the problem of the tentative velocity ste
                     A1, b1 = self.assemble_tentative_velocity(u_, p_, Lm_f, dt)
                     self.solve_tentative_velocity(A1, u_[0], b1, bcs['velocity'])
                     s1 += timer_s1.stop()
@@ -377,14 +361,14 @@ class NS_DLM_Solver:
 
                     # Interpolate the velocity on the solid mesh in order to obtain 
                     # the new Lagrange multiplier lambda(n+1)
-                    timer_si.start()
+                
                     uf_.assign(interpolate_nonmetching_mesh_delta(fsi_interpolation, uv, "S"))
-                    si += timer_si.stop()
+                    
 
                     # Update the solid position 
                     self.update_solid(solid_mesh.mesh, t, dt)
 
-                    print(BLUE % "3: Lagrange multiplier (fictitious force) step", flush = True)
+                    print("3: Lagrange multiplier (fictitious force) step", flush = True)
                     # Assemble and solve the problem of the Lagrange multiplier step
                     timer_s3.start()
                     a3, b3 = self.assemble_lagrange_multiplier(Lm_, us_, uf_, dt)
@@ -397,7 +381,7 @@ class NS_DLM_Solver:
                     Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
                     Lm_f_old.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
                     bDLM = self.assemble_velocity_correction_DLM(u_[0], Lm_f, Lm_f_old, dt)
-                    print(BLUE % "4: Velocity correction step", flush = True)
+                    print("4: Velocity correction step", flush = True)
                     timer_s4.start()
                     self.solve_velocity_correction(u_[0], bDLM, bcs['velocity'])
                     s4 += timer_s4.stop()
@@ -406,10 +390,10 @@ class NS_DLM_Solver:
 
                 except Exception as e:
 
-                    print(BLUE % 'error message : ', flush = True); traceback.print_exc(file=sys.stdout) #; print(e, flush = True)
-                    print(BLUE % "NS_DLM solver diverged --- at time : {} sec , corresponding timestep : {}".format(t, tsp), flush = True)
+                    print('error message : ', flush = True); traceback.print_exc(file=sys.stdout) #; print(e, flush = True)
+                    print("NS_DLM solver diverged --- at time : {} sec , corresponding timestep : {}".format(t, tsp), flush = True)
 
-                    print(BLUE % '\n NS_DLM solver - TERMINATED : t = {}'.format(t), "\n", flush = True)
+                    print('\n NS_DLM solver - TERMINATED : t = {}'.format(t), "\n", flush = True)
 
                 else:
 
@@ -420,7 +404,7 @@ class NS_DLM_Solver:
                     if counters[0] >= print_control['a']:
 
                         reset_counter(counters, 0);
-                        print(BLUE % "File printing in progress --- Simulation run time : {} , Wall time elapsed : {} sec".format(t, timer_total.elapsed()[0]), flush = True)
+                        print("File printing in progress --- Simulation run time : {} , Wall time elapsed : {} sec".format(t, timer_total.elapsed()[0]), flush = True)
                         saveVTK(file_dict, t, uv, p_[0])
                         solid_mesh_file.write(solid_mesh.mesh, time=t)
 
@@ -445,21 +429,21 @@ class NS_DLM_Solver:
 
         # ================================
 
-        except Exception as e: print(BLUE % 'error message : ', flush = True); traceback.print_exc(file=sys.stdout) #; print(e, flush = True)
+        except Exception as e: print('error message : ', flush = True); traceback.print_exc(file=sys.stdout) #; print(e, flush = True)
 
         finally:
 
             if t >= T:
-                print(BLUE % '\nNS with DLM solver - COMPLETED : t = {}'.format(t), "\n", flush = True)
+                print('\nNS with DLM solver - COMPLETED : t = {}'.format(t), "\n", flush = True)
             
             """
             memory('Final memory use')
-            print(RED % 'Total memory usage of solver = {} MB (RSS)'.format(str(memory.memory - initial_memory_use)), "\n", flush = True)
+            print('Total memory usage of solver = {} MB (RSS)'.format(str(memory.memory - initial_memory_use)), "\n", flush = True)
             """
 
             wall_time = timer_total.stop()
 
-            print(RED % "Total simulation wall time : {} sec".format(wall_time), "\n", flush = True)
+            print("Total simulation wall time : {} sec".format(wall_time), "\n", flush = True)
 
         # ================================
 
@@ -510,7 +494,7 @@ class NS_DLM_Solver:
         X1.axpy(-2.0, d['Kij'])
         b1 = [None] * self.u_components
         for ui in range(self.u_components):
-            b1[ui] = self.optimized_rhs( ui, X1, u_[1], p_[1])	
+            b1[ui] = self.optimized_rhs(ui, X1, u_[1], p_[1])	
         
         A1.axpy(1.0, d['Cij'])
 

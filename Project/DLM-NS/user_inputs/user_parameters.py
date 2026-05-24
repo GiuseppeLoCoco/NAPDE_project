@@ -70,7 +70,7 @@ time_control = dict(
     tmax=5.0,								
     dt_min=0.0,						
     adjustable_timestep=False,			
-    maxit=10, 								
+    maxit=100, 								
     fd_tol=1e-8							
 )
 time_control['T'] = time_control['tmax']

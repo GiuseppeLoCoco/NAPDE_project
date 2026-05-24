@@ -46,12 +46,12 @@ physical_parameters = dict(
     heat_alpha=100.0
 )
 
-"""characteristic_scales = dict(
+characteristic_scales = dict(
     Lsc=1.0,			            		          
     Vsc=1.0,	         		    
     T0=-1.0 * 52.0,								
     Tm=37.0									
-)"""
+)
 
 time_control = dict(
     C_no=1.0,								
