@@ -45,29 +45,34 @@ def conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n):
     return m
 
 
-def create_solid_mesh(x_obs, y_obs, r_obs):
+class create_solid_mesh:
+    def __init__(self,x_obs, y_obs, r_obs):
+        self.x_obs = x_obs
+        self.y_obs = y_obs
+        self.r_obs = r_obs
+        nnn = int(70 * 3 * r_obs / 2.2)
+        
+        # Per geometrie circolari/curve, in Firedrake lo standard è Gmsh API
+        gmsh.initialize()
+        gmsh.model.add("circle")
+        gmsh.model.occ.addDisk(x_obs, y_obs, 0, r_obs, r_obs)
+        gmsh.model.occ.synchronize()
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", r_obs/nnn)
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", r_obs/nnn)
+        gmsh.model.mesh.generate(2)
+        
+        gmsh.write("temp_circle.msh")
+        gmsh.finalize()
+        
+        self.mesh = Mesh("temp_circle.msh")
+        if os.path.exists("temp_circle.msh"):
+            os.remove("temp_circle.msh")
+		
 
-    nnn = int(70 * 3 * r_obs / 2.2)
-    
-    # Per geometrie circolari/curve, in Firedrake lo standard è Gmsh API
-    gmsh.initialize()
-    gmsh.model.add("circle")
-    gmsh.model.occ.addDisk(x_obs, y_obs, 0, r_obs, r_obs)
-    gmsh.model.occ.synchronize()
-    gmsh.option.setNumber("Mesh.CharacteristicLengthMin", r_obs/nnn)
-    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", r_obs/nnn)
-    gmsh.model.mesh.generate(2)
-    
-    gmsh.write("temp_circle.msh")
-    gmsh.finalize()
-    
-    mesh = Mesh("temp_circle.msh")
-    if os.path.exists("temp_circle.msh"):
-        os.remove("temp_circle.msh")
-    
-    return mesh
-
-def create_fluid_mesh(n,Lx,Ly):
-    ny = int(n * (self.Ly / self.Lx))
-    mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
-    return mesh
+class create_fluid_mesh:
+    def __init__(self,Lx,Ly,n):
+        self.Lx = Lx
+        self.Ly = Ly
+        nnn = n
+        ny = int(nnn * (self.Ly / self.Lx))
+        self.mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
