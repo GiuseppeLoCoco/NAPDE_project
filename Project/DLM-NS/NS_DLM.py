@@ -25,6 +25,17 @@ def saveVTK(file_dict, t, uh, ph, phi, chi):
     file_dict['chi'].write(chi, time=t)
 """
 
+def saveVTK(file_dict, t, uh, ph, phi=None, chi=None):
+    uh.rename('u', 'u')
+    ph.rename('p', 'p')
+    file_dict['u'].write(uh, time=t)
+    file_dict['p'].write(ph, time=t)
+    if phi is not None and chi is not None:
+        phi.rename('phi', 'phi')
+        chi.rename('chi', 'chi')
+        file_dict['phi'].write(phi, time=t)
+        file_dict['chi'].write(chi, time=t)
+
 class NS_DLM_Solver:
 
     def __init__(self, conforming=False, moving=True):
@@ -152,7 +163,7 @@ class NS_DLM_Solver:
                            Yij=[None for ui in range(u_components)],
                            A1_as1=None, A2_as2=None, b1_Ls1=None, A1_SCW1=None, b2=None) 
 
-        bool_stream = result_folder.bool_stream
+        bool_stream = calc_stream_function
         self.bool_stream = bool_stream 
 
         self.dx_fluid = Measure("dx", domain=mesh)
@@ -277,37 +288,28 @@ class NS_DLM_Solver:
         counters = create_counters(5) 
         s1, s2, s3, s4, si, sr, s_dt = [0.0 for _ in range(10)]
 
-        timeseries = write_time_series(result_folder.folder, restart)
+        if self.conforming:
+            dir1 = 'conforming/'
+        else:
+            dir1 = 'dlm/'
 
-        """
-        # Output/write meshes
-        pv1 = write_mesh(result_folder.folder, fluid_mesh.mesh, "fluid_mesh")
-        pv1.write_mesh_boundaries(fluid_mesh.get_mesh_boundaries())
+        if self.moving:
+            dir2 = 'moving/'
+        else:
+            dir2 = 'steady/'
 
-        timeseries = write_time_series(result_folder.folder, restart)
+        basedir = 'cyl/' + dir1 + dir2 + 'n' + str(n) + '/'
+        if not os.path.exists(basedir):
+            os.makedirs(basedir)
 
-        filename = "solid_reference_mesh"
-        if restart == True:	filename = "solid_restart_mesh"
+        xdmffile_u = VTKFile(basedir + 'velocity.pvd')
+        xdmffile_p = VTKFile(basedir + 'pressure.pvd')
+        solid_mesh_file = VTKFile(basedir + 'solid_mesh.pvd')
+        file_dict = {'u': xdmffile_u, 'p': xdmffile_p}
 
-        pv = write_mesh(result_folder.folder, solid_mesh.mesh, filename)
-        """ 
-
-        # Output files for the solutions
-        files = ['u', 'p']
-        text_files = ['flow_data', 'runtime_stats', 'restart', 'log_info']
-        files.extend(['us', 'Lm'])
-        text_files.extend(['solid_data', 'lagrange_data'])
-
-        if result_folder.bool_stream == True:
-            files.extend(['vorticity', 'stream_function'])
-
-        xdmf_file_handles, checkpoint_file_handles = result_folder.create_files(files)
-        # xdmf_file_handles, hdf5_file_handles = result_folder.create_files(files)
-        text_file_handles = result_folder.create_text_files(text_files)
-        result_folder.write_header_text_files(text_file_handles)
-
-        # write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
-        write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, checkpoint_file_handles, **variables)
+        uv.assign(0.0)
+        saveVTK(file_dict, t, uv, p_[0])
+        solid_mesh_file.write(solid_mesh.mesh, time=t)
 
         print(RED % "Total time = {}".format(T), "\n", flush = True)
 
@@ -422,26 +424,8 @@ class NS_DLM_Solver:
 
                         reset_counter(counters, 0);
                         print(BLUE % "File printing in progress --- Simulation run time : {} , Wall time elapsed : {} sec".format(t, timer_total.elapsed()[0]), flush = True)
-
-                        vort, psi = self.calc_vorticity_streamfunction(uv, bcs['streamfunction'])
-
-                        write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
-
-                        pv2 = write_mesh_H5(result_folder.folder, solid_mesh.mesh, "solid_current_mesh")
-                        pv2.hdf.close()
-
-                        timeseries.store(solid_mesh.mesh, t)
-
-                    # ----------------------------------
-
-                    # If required: calculate new time-step
-                    if counters[4] >= print_control['e']:
-
-                        reset_counter(counters, 4)
-                        tsp = calc_runtime_stats_timestep(problem_physics, u_[0], u_components, 
-                                                          u_diff, t, tsp, text_file_handles, fluid_mesh.mesh, 
-                                                          hmin_f, flow.h_f_X, Re, np.nan, np.nan, flow.VN_local, time_control)
-                        dt  = Constant(tsp)
+                        saveVTK(file_dict, t, uv, p_[0])
+                        solid_mesh_file.write(solid_mesh.mesh, time=t)
 
                     # ----------------------------------
 
@@ -454,19 +438,13 @@ class NS_DLM_Solver:
                     if counters[2] >= print_control['c']:
 
                         reset_counter(counters, 2);
-                        text_file_handles[3].truncate(0); text_file_handles[3].seek(0)
-                        text_file_handles[3].write("#Time		#Step_1			#Step_2			#Step_3			#Step_4			#Step_interpolation	#Step_move_mesh		#Step_remeshing\n")
-                        text_file_handles[3].write(f"{t:0,.10G}     {s1:0,.10G}     {s2:0,.10G}     {s3:0,.10G}     {s4:0,.10G}     {si:0,.10G}     {sr:0,.10G}\n\n")
-                        if t < 0.98*T: text_file_handles[3].write("\n")
+                        pass
 
                     s_dt += timer_dt.stop()
 
                     # ----------------------------------
 
-                    # Check for killvanDANA file
-                    if os.path.isfile(path.join(result_folder.folder, "NSwithDLM")) == True:
-                        print(RED % "--- killing NSwithDLM solver --- t = {}".format(t), "\n", flush = True)
-                        break
+                    # No result_folder-based kill file in VTK output mode
 
         # ================================
 
@@ -476,9 +454,6 @@ class NS_DLM_Solver:
 
             if t >= T:
                 print(BLUE % '\nNS with DLM solver - COMPLETED : t = {}'.format(t), "\n", flush = True)
-                complete = io.TextIOWrapper(open(result_folder.folder + "complete", "wb", 0), write_through=True)
-                complete.seek(0); complete.write("{}, T = {}".format("COMPLETED", T))
-                complete.close()
             
             """
             memory('Final memory use')
@@ -487,26 +462,11 @@ class NS_DLM_Solver:
 
             wall_time = timer_total.stop()
 
-            text_file_handles[3].write("{} {} {}".format("\n\n", "DOFs -->", json.dumps(DOFS)))
-            text_file_handles[3].write("{} {} {} {}".format("\n\n", "Total simulation wall time : ", wall_time, " sec"))
-            text_file_handles[3].write("\n")
-
             print(RED % "Total simulation wall time : {} sec".format(wall_time), "\n", flush = True)
-
-            for x in text_file_handles:
-                x.close()
-            for y,z in hdf5_file_handles.items():
-                z.close(); del z
-
-            if problem_physics['solve_FSI'] == True:
-                read_time_series(Mpi.mpi_comm, curr_dir)
-
-            if restart == True:
-                extract_hdf5_data_for_xdmf_visualization(Mpi.mpi_comm, curr_dir, result_folder.bool_stream, problem_physics, fem_degree)
 
         # ================================
 
-     def update_solid(self, mesh, t, dt):
+    def update_solid(self, mesh, t, dt):
         Dp_ = self.variables['Dp_']
         us_ = self.variables['us_']
 
