@@ -548,6 +548,26 @@ class NS_DLM_Solver:
         # Parametri equivalenti a 'bicgstab' + 'sor' in PETSc
         solve(A, x, b, solver_parameters={'ksp_type': 'bicgstab', 'pc_type': 'sor'})
 
+    
+    #Da correggere
+    def update_variables(self,u_components):
+    u_ = update[0]
+    p_ = update[1]
+
+    for ui in range(u_components):
+        u_[2][ui].assign(u_[1][ui])
+        u_[1][ui].assign(u_[0][ui]) 
+    p_[2].assign(p_[1])    
+    p_[1].assign(p_[0])
+
+    #Chiedere per questo pezzo
+    if problem_physics['solve_FSI'] == True:
+        self.Dp_ = update[2]
+        self.Lm_ = update[3]
+
+        self.Dp_[2].assign(self.Dp_[1])
+        self.Lm_[1].assign(self.Lm_[0])
+
     def calc_vorticity_streamfunction(self, u, bcs):
         p = self.p; q = self.q; dx = self.dx
         vort = self.variables['vort']
