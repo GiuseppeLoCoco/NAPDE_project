@@ -76,3 +76,4 @@ class create_fluid_mesh:
         nnn = n
         ny = int(nnn * (self.Ly / self.Lx))
         self.mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
+

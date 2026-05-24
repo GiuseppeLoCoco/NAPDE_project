@@ -195,7 +195,7 @@ class Fluid_problem:
         return A1, b1	        
 
     def optimized_rhs(self, ui, X1, u, p):
-        b = dolfin_to_firedrake_copy(self.matrix['Bij'][ui])
+        b = self.matrix['Bij'][ui].copy(deepcopy=True).vector()
         b.axpy(1.0, X1 * u[ui].vector())
         b.axpy(self.pvc_factor, self.matrix['Sij'][ui] * p.vector())
         return b
@@ -290,9 +290,3 @@ class Fluid_problem:
 
         return vort, psi
 
-def dolfin_to_firedrake_copy(vec):
-    # Helper per copiare strutture vettoriali simili
-    from firedrake.numeric_constants import JustToGetVector
-    new_vec = Function(vec.function_space()).vector()
-    new_vec.assign(vec)
-    return new_vec

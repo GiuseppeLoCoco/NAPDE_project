@@ -47,8 +47,8 @@ class PrescribedKinematics:
         Dp_[1].assign(-Dp_[0])    
         
         # Sostituzione di Expression con l'estrazione geometrica esplicita in Firedrake
-        X = SpatialCoordinate(mesh)
-        displ_x = (self.amplitude * 0.5 * (1 - cos(0.4 * PI * t)))
+        
+        displ_x = (self.amplitude * 0.5 * (1.0 - cos(0.2 * pi * t)))
         displ_y = 0.0
         
         # Interpolazione analitica UFL su spazio discreto

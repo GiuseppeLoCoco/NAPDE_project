@@ -43,9 +43,6 @@ class NS_DLM_Solver:
         corrective_step = False
 
         curr_dir = os.path.dirname(os.path.abspath(__file__)) + '/'
-        remove_killvanDANA(curr_dir)
-        remove_complete(curr_dir)
-
         blockPrint()
                         
         # --------------------------------
@@ -158,15 +155,21 @@ class NS_DLM_Solver:
         bool_stream = result_folder.bool_stream
         self.bool_stream = bool_stream 
 
-        self.dx = Measure("dx", domain=mesh)
-        self.ds = Measure("ds", domain=mesh)
+        self.dx_fluid = Measure("dx", domain=mesh)
+        self.ds_fluid = Measure("ds", domain=mesh)
+        self.Re = Constant(Re)
+        self.Fr = Constant(Fr)
+
 
         u_ab = as_vector([Function(V) for ui in range(self.u_components)]) 
-
+        
+        self.Cij = dot(dot(self.u_ab, nabla_grad(self.u1)), self.v) * self.dx
         self.u_ab = u_ab
+
         self.f = f
         self.dim = dim
         self.variables = variables
+
 
         u_solver_params = {
             "ksp_type": tentative_velocity_solver['solver_type'],
@@ -204,19 +207,17 @@ class NS_DLM_Solver:
         test = TestFunction(R) 
         solid_variables = dict()
 
+        Dp_ = [Function(R) for _ in range(3)]
         us_ = Function(R)
-        solid_variables.update(us_=us_)
+        solid_variables.update(Dp_=Dp_, us_=us_)
 
-        F = [R, Z]
-        n = FacetNormal(mesh)
-        nx = tensors.unit_vector(0, dim)
-        ny = tensors.unit_vector(1, dim)
-        dx = Measure("dx", domain=mesh)
-        
+       
+        self.dx_solid = Measure("dx", domain=mesh)
+        self.ds_solid = Measure("ds", domain=mesh)
         # Compute Amplitude
         coords = mesh.coordinates.dat.vec_ro.array
         self.diameter = np.linalg.norm(coords.max() - coords.min())
-        self.amplitude = 0.0 * self.diameter
+        self.amplitude = 6 * self.diameter
 
         # --------------------------------
         # Initialize Lagrage Multiplier Variational Problem
@@ -242,9 +243,6 @@ class NS_DLM_Solver:
         lagrange_variables.update(Lm_=Lm_, uf_=uf_)	
 
         F = [Y, Z2]
-        nx = tensors.unit_vector(0, dim)
-        ny = tensors.unit_vector(1, dim)
-        dx = Measure("dx", domain=mesh)
 
         FS.update(lagrange = F)
 
@@ -253,14 +251,13 @@ class NS_DLM_Solver:
 
         self.us_ = us_
         self.F = [Y, Z2]
-        self.nx = tensors.unit_vector(0, dim)
-        self.ny = tensors.unit_vector(1, dim)
         self.dx = Measure("dx", domain=mesh)
 
         # ================================
 
         # Create boundary conditions for the fluid problem
-        bcs = prescrKin_fluid_create_boundary_conditions(fluid_mesh, **FS)
+        
+        bcs = create_boundary_conditions(fluid_mesh, **FS)
 
         # ---------------------------------
 
@@ -373,15 +370,7 @@ class NS_DLM_Solver:
                     self.solve_tentative_velocity(A1, u_[0], b1, bcs['velocity'])
                     s1 += timer_s1.stop()
 
-                    # ================================
-
-                    print(BLUE % "2: Pressure correction step", flush = True)
-                    # Assemble and solve the problem of the pressure correction
-                    timer_s2.start()
-                    A2, b2 = self.assemble_pressure_correction(u_, Lm_f, dt)
-                    self.solve_pressure_correction(A2, p_[0], b2, bcs['pressure'])
-                    s2 += timer_s2.stop()
-
+                   
                     # ================================
 
                     # Create the velocity vector
@@ -419,9 +408,9 @@ class NS_DLM_Solver:
                 except Exception as e:
 
                     print(BLUE % 'error message : ', flush = True); traceback.print_exc(file=sys.stdout) #; print(e, flush = True)
-                    print(BLUE % "vanDANA solver diverged --- at time : {} sec , corresponding timestep : {}".format(t, tsp), flush = True)
+                    print(BLUE % "NS_DLM solver diverged --- at time : {} sec , corresponding timestep : {}".format(t, tsp), flush = True)
 
-                    print(BLUE % '\nvanDANA solver - TERMINATED : t = {}'.format(t), "\n", flush = True)
+                    print(BLUE % '\n NS_DLM solver - TERMINATED : t = {}'.format(t), "\n", flush = True)
 
                 else:
 
@@ -517,15 +506,35 @@ class NS_DLM_Solver:
 
         # ================================
 
+     def update_solid(self, mesh, t, dt):
+        Dp_ = self.variables['Dp_']
+        us_ = self.variables['us_']
 
-    def update_solid(self, mesh, t, dt):
-        us_ = self.variables['us_']   
+        Dp_[2].assign(Dp_[1])         
+        Dp_[1].assign(-Dp_[0])    
         
         # Sostituzione di Expression con l'estrazione geometrica esplicita in Firedrake
-        X = SpatialCoordinate(mesh)
-        displ_x = (self.amplitude * 0.5 * (1 - math.cos(0.4 * PI * t)))
-        displ_y = 0.0    
+        
+        displ_x = (self.amplitude * 0.5 * (1.0 - cos(0.2 * pi * t)))
+        displ_y = 0.0
+        
+        # Interpolazione analitica UFL su spazio discreto
+        Dp_[0].interpolate(as_vector([displ_x, displ_y]))
+        Dp_[1].vector().axpy(1.0, Dp_[0].vector())      
 
+        # Muoviamo la mesh ridefinendo le sue coordinate (Equivalente Firedrake ad ALE.move)
+        mesh.coordinates.assign(mesh.coordinates + Dp_[1])
+
+        us_.assign(0.0)
+        us_.vector().axpy(1.0 / float(dt), Dp_[1].vector())
+
+    
+    def optimized_rhs(self, ui, X1, u, p):
+        b = self.matrix['Bij'][ui].copy(deepcopy=True).vector()
+        b.axpy(1.0, X1 * u[ui].vector())
+        b.axpy(self.pvc_factor, self.matrix['Sij'][ui] * p.vector())
+        return b
+	
     def assemble_tentative_velocity(self, u_, p_, Lm_f, dt):
         d = self.matrix
         u_ab = self.u_ab
