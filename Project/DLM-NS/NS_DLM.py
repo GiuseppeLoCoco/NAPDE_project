@@ -13,6 +13,7 @@ import inspect
 from ast import Constant
 from symtable import Function
 
+"""
 def saveVTK(file_dict, t, uh, ph, phi, chi):
     uh.rename('u','u')
     ph.rename('p','p')
@@ -22,6 +23,7 @@ def saveVTK(file_dict, t, uh, ph, phi, chi):
     file_dict['p'].write(ph, time=t)
     file_dict['phi'].write(phi, time=t)
     file_dict['chi'].write(chi, time=t)
+"""
 
 class NS_DLM_Solver:
 
@@ -59,8 +61,8 @@ class NS_DLM_Solver:
         if self.conforming:
             mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
         else:
-            fluid_mesh = create_fluid_mesh()
-            solid_mesh = create_solid_mesh()
+            fluid_mesh = create_fluid_mesh(Lx, Ly, n)
+            solid_mesh = create_solid_mesh(y_obs, y_obs, r_obs)
 
         hmax_f = Max(fluid_mesh.mesh.hmax())
         hmin_f = Min(fluid_mesh.mesh.hmin())
@@ -103,6 +105,7 @@ class NS_DLM_Solver:
         dim = fluid_mesh.mesh.geometric_dimension()
         u_components = dim
         self.u_components = u_components
+        mesh = fluid_mesh.mesh
         # Define function spaces
         V = FunctionSpace(mesh, 'P', fem_degree['velocity_degree'])		  
         Q = FunctionSpace(mesh, 'P', fem_degree['pressure_degree'])		  
@@ -137,6 +140,11 @@ class NS_DLM_Solver:
 
         variables.update(u_=u_, uv=uv, p_=p_, Lm_f=Lm_f)	
 
+        vort, psi = Function(Q), Function(Q)
+        vort.assign(0.0)
+        psi.assign(0.0)
+        variables.update(vort=vort, psi=psi)
+
         self.A1 = None
         self.A2 = None
         self.A3 = None
@@ -145,8 +153,14 @@ class NS_DLM_Solver:
                            Bij=[None for ui in range(u_components)],
                            Pij=[None for ui in range(u_components)],
                            Yij=[None for ui in range(u_components)],
-                           A1_as1=None, A2_as2=None, b1_Ls1=None, A1_SCW1=None, b2=None)
-        
+                           A1_as1=None, A2_as2=None, b1_Ls1=None, A1_SCW1=None, b2=None) 
+
+        bool_stream = result_folder.bool_stream
+        self.bool_stream = bool_stream 
+
+        self.dx = Measure("dx", domain=mesh)
+        self.ds = Measure("ds", domain=mesh)
+
         u_ab = as_vector([Function(V) for ui in range(self.u_components)]) 
 
         self.u_ab = u_ab
@@ -290,11 +304,13 @@ class NS_DLM_Solver:
         if result_folder.bool_stream == True:
             files.extend(['vorticity', 'stream_function'])
 
-        xdmf_file_handles, hdf5_file_handles = result_folder.create_files(files)
+        xdmf_file_handles, checkpoint_file_handles = result_folder.create_files(files)
+        # xdmf_file_handles, hdf5_file_handles = result_folder.create_files(files)
         text_file_handles = result_folder.create_text_files(text_files)
         result_folder.write_header_text_files(text_file_handles)
 
-        write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
+        # write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, hdf5_file_handles, **variables)
+        write_solution_files(problem_physics, result_folder.bool_stream, t, xdmf_file_handles, checkpoint_file_handles, **variables)
 
         print(RED % "Total time = {}".format(T), "\n", flush = True)
 
@@ -450,8 +466,8 @@ class NS_DLM_Solver:
 
                         reset_counter(counters, 2);
                         text_file_handles[3].truncate(0); text_file_handles[3].seek(0)
-                        text_file_handles[3].write("#Time		#Step_1			#Step_2			#Step_3			#Step_4			#Step_5			#Step_6			#Step_7			#Step_interpolation	#Step_move_mesh		#Step_remeshing\n")
-                        text_file_handles[3].write(f"{t:0,.10G}		{s1:0,.10G}		{s2:0,.10G}		{s3:0,.10G}		{s4:0,.10G}		{s5:0,.10G}		{s6:0,.10G}		{s7:0,.10G}		{si:0,.10G}		{sm:0,.10G}		{sr:0,.10G}\n\n")
+                        text_file_handles[3].write("#Time		#Step_1			#Step_2			#Step_3			#Step_4			#Step_interpolation	#Step_move_mesh		#Step_remeshing\n")
+                        text_file_handles[3].write(f"{t:0,.10G}     {s1:0,.10G}     {s2:0,.10G}     {s3:0,.10G}     {s4:0,.10G}     {si:0,.10G}     {sr:0,.10G}\n\n")
                         if t < 0.98*T: text_file_handles[3].write("\n")
 
                     s_dt += timer_dt.stop()
@@ -554,7 +570,10 @@ class NS_DLM_Solver:
             solve(A, x[ui], b[ui], bcs=bcs[ui], solver_parameters=self.u_c_solver_params)
 
     def assemble_lagrange_multiplier(self, Lm_, us_, uf_, dt):
-        e = self.e; Lm = self.Lm; dx = self.dx
+        e = self.e 
+        Lm = self.Lm
+        dx = self.dx
+        
         A = assemble(dot(Lm, e) * dx)
         b = assemble((1 / dt) * dot(us_ - uf_, e) * dx + dot(Lm_[1], e) * dx)
         return A, b
@@ -579,7 +598,7 @@ class NS_DLM_Solver:
 
         return vort, psi
         
-
+"""
 if __name__ == '__main__':
 
     # parsing arguments from command line
@@ -594,4 +613,16 @@ if __name__ == '__main__':
     # --------------------------------
 
     NS_DLM_Solver(args)
+"""
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description = 'to append arguments from terminal')
+    parser.add_argument('-velocity_degree', type=int, default=2)
+    parser.add_argument('-displacement_degree', type=int, default=1)
+    args = parser.parse_args()
+
+    # Inizializza la classe e poi chiama il solutore passando gli argomenti
+    solver = NS_DLM_Solver(conforming=False, moving=True)
+    solver.NS_DLM_Solve(args)
 
