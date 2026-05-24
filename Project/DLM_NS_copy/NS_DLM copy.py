@@ -26,21 +26,12 @@ class NS_DLM_solver(args):
         keep_solid_on_reference = False
         corrective_step = False
 
-        memory = MemoryUsage('Start')
+        
         curr_dir = os.path.dirname(os.path.abspath(__file__)) + '/'
-        remove_killvanDANA(curr_dir); remove_complete(curr_dir)
-
-       
+               
         blockPrint()
-        if Mpi.get_rank() == 0: enablePrint()
-
-        # info(parameters, True)
-
-        print(BLUE % "\nFEM stabilizations = {}".format(str([k for k, v in stabilization_parameters.items() if v == True])), flush = True)
-
-        time_scale = characteristic_scales['Lsc']/characteristic_scales['Vsc']
-        characteristic_scales.update(Tsc = time_scale)
-
+        
+        
         # ---------------------------------------------------------------------------------
 
         # Calculate non-dimensional numbers
@@ -51,16 +42,20 @@ class NS_DLM_solver(args):
 
         # ---------------------------------------------------------------------------------
 
-        # Create mesh
-        fluid_mesh = create_fluid_mesh()
-        solid_mesh = create_solid_mesh()
-        #??? boundaries = solid_mesh.get_mesh_boundaries(); subdomains = solid_mesh.get_mesh_subdomains()
+        Lx, Ly = 3, 1
+        y_obs = 0.5
+        r_obs = 0.1
+        n = 50        # Create meshes for fluid and solid (for DLM) domains
+        if self.conforming:
+            mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
+        else:
+            fluid_mesh = create_fluid_mesh(Lx, Ly, n)
+            solid_mesh = create_solid_mesh(y_obs, y_obs, r_obs)
 
-        hmax_f = Mpi.Max(fluid_mesh.mesh.hmax()); hmin_f = Mpi.Min(fluid_mesh.mesh.hmin())
-        hmax_s = Mpi.Max(solid_mesh.mesh.hmax()); hmin_s = Mpi.Min(solid_mesh.mesh.hmin())
-
-        # Problem dimension
-        dim = fluid_mesh.mesh.geometry().dim()
+        hmax_f = Max(fluid_mesh.mesh.hmax())
+        hmin_f = Min(fluid_mesh.mesh.hmin())
+        hmax_s = Max(solid_mesh.mesh.hmax()) 
+        hmin_s = Min(solid_mesh.mesh.hmin())
 
         # ---------------------------------------------------------------------------------
 
@@ -70,7 +65,6 @@ class NS_DLM_solver(args):
         # ---------------------------------------------------------------------------------
 
         # Time step settings
-        Mpi.set_barrier()
         tsp = dt = time_control['dt']
         T = time_control['T']
         dt = Constant(dt)
@@ -79,16 +73,24 @@ class NS_DLM_solver(args):
 
         # Create output folder
         suffix = ''
-        if corrective_step:
-            suffix = '_corr'
+        if self.conforming:
+            suffix = '_conforming'
         else:
-            suffix = '_NOcorr'
+            suffix = '_NOconforming'
         suffix += f"_maxit{time_control['maxit']}_dt{tsp}"
         result_folder = create_result_folder(curr_dir, restart, dim, calc_stream_function, suffix)
 
-        # ---------------------------------------------------------------------------------
+        # --------------------------------
+        # Initialize Flow Variational Problem
+        # --------------------------------
+
+        # Problem dimension
+        dim = fluid_mesh.mesh.geometry().dim()
 
         # Initialize flow problem
+        mesh = fluid_mesh.mesh
+
+
         flow = Fluid_problem(fluid_mesh, result_folder.bool_stream); FS = dict(fluid = flow.F)
         u_components = flow.u_components; u_ = flow.variables['u_'];  uv = flow.variables['uv']; assigner_uv = flow.assigner_uv
         p_ = flow.variables['p_']; Lm_f = flow.variables['Lm_f']; vort = flow.variables['vort']; psi = flow.variables['psi']

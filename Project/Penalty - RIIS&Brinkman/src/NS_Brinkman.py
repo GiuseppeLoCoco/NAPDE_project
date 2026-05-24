@@ -70,7 +70,7 @@ class Brinkman_solver:
         x, y = SpatialCoordinate(mesh)
         inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0*y*(1.0 - y), 0.0))
 
-        R = n*20
+        R = n*20 
         if self.conforming:
             R = 0
 
@@ -200,3 +200,6 @@ if __name__ == '__main__':
     # Istanziamo la classe e chiamiamo il solver
     solver = Brinkman_solver(conforming=False, moving=True)
     solver.Brinkman_solve(args)
+
+
+
