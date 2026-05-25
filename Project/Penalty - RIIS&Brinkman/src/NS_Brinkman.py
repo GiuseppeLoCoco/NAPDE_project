@@ -1,3 +1,4 @@
+from ast import Constant
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -5,6 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 
 from firedrake import *
 from firedrake import VTKFile
+from firedrake import CheckpointFile
 from domain_settings import *
 from time import time
 import numpy as np
@@ -27,7 +29,7 @@ def saveVTK(file_dict, t, uh, ph, phi, chi):
 
 class Brinkman_solver:
 
-    def __init__(self, conforming=False, moving=True):
+    def __init__(self, conforming=True, moving=True):
         self.conforming = conforming
         self.moving = moving
 
@@ -42,12 +44,15 @@ class Brinkman_solver:
 
         Lx, Ly = 3, 1
         y_obs = 0.5
+        x_obs = y_obs
         r_obs = 0.1
         n = 50
 
-        if self.conforming:
-            mesh = conforming_mesh(Lx, Ly, y_obs, y_obs, r_obs, n)
+        # self.conforming = True;
+        self.conforming = False;
 
+        if self.conforming:
+            mesh = conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n)
         else:
             mesh = RectangleMesh(n, n//3, Lx, Ly)
 
@@ -68,24 +73,32 @@ class Brinkman_solver:
 
         # Coordinates for expressions
         x, y = SpatialCoordinate(mesh)
-        inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0*y*(1.0 - y), 0.0))
+        inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0*y*(1.0 - y), 0.0)) 
 
-        R = n*20 
         if self.conforming:
             R = 0
+        else:
+            R = n*20.0
 
-        # Define boundaries
-        # For RectangleMesh: 1: x=0, 2: x=Lx, 3: y=0, 4: y=Ly
-        inflow_id = 1
-        outflow_id = 2
-        walls_ids = (3, 4)
-
-        obstacle = circleObstacle(y_obs,y_obs,r_obs)
+        self.obstacle = circleObstacle(y_obs, y_obs, r_obs)       
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
+
+        # Define Boundaries
+        if self.conforming:
+            # Allineamento con i tag assegnati dentro conforming_mesh.py
+            inflow_id = 3
+            outflow_id = 4
+            walls_ids = (1, 2)  # Bottom e Top
+            cylinder_id = 5     # Il contorno del cilindro conforme
+        else:
+            # Per RectangleMesh nativa di Firedrake: 1: x=0, 2: x=Lx, 3: y=0, 4: y=Ly
+            inflow_id = 1
+            outflow_id = 2
+            walls_ids = (3, 4)
 
         # Define boundary conditions
         bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
@@ -102,9 +115,9 @@ class Brinkman_solver:
         uh, ph = sol.subfunctions
 
         # Define expressions for Brinkman
-        phi_expr = obstacle.distExpr(mesh, t)
-        chi_expr = obstacle.chi(mesh, t)
-        us_expr = as_vector((obstacle.us_x(t), obstacle.us_y(t)))
+        phi_expr = self.obstacle.distExpr(mesh, t)
+        chi_expr = self.obstacle.chi(mesh, t)
+        us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
 
         if self.conforming and self.moving:
             w = us_expr
@@ -137,9 +150,25 @@ class Brinkman_solver:
         else:
             dir2 = 'steady/'
 
-        basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
+        if self.conforming:
+            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'/'
+        else:
+            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
+
         if not os.path.exists(basedir):
             os.makedirs(basedir)
+
+        basedir_vel = basedir + 'velocity/'
+        basedir_pres = basedir + 'pressure/'
+        basedir_chi = basedir + 'chi/'
+        basedir_phi = basedir + 'phi/'
+        basedir_mesh = basedir + 'mesh/'
+
+        subdirs = [basedir_vel, basedir_pres, basedir_chi, basedir_phi, basedir_mesh]
+
+        for folder in subdirs:
+            if not os.path.exists(folder):
+                os.makedirs(folder)
 
         # Create VTK files for visualization output
         xdmffile_u = VTKFile(basedir+'velocity.pvd')
@@ -159,6 +188,14 @@ class Brinkman_solver:
         chiFun.interpolate(chi_expr)
 
         saveVTK(file_dict, t_val, uh, ph, phiFun, chiFun)
+        
+        if self.conforming and self.moving:
+            with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                chk.save_mesh(mesh)
+        else:
+            with CheckpointFile(basedir_mesh + 'mesh.h5', 'w') as chk:
+                chk.save_mesh(mesh)
+
 
         for step in range(num_steps):
             # Update current time
@@ -166,32 +203,116 @@ class Brinkman_solver:
             print('t =', t_val)
             t.assign(t_val)
 
-            current_us_x = float(assemble(obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
+            current_us_x = float(assemble(self.obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
 
             # Current Position of the cylinder
             amplitude = 12 * r_obs
             displ_x = amplitude * 0.5 * (1 - cos(0.2 * PI * t))
-            xc = obstacle.x_obs + displ_x
-            yc = obstacle.y_obs
+            xc = self.obstacle.x_obs + displ_x
+            yc = self.obstacle.y_obs
     
             if self.conforming and self.moving:
-                mesh = conforming_mesh(Lx, Ly, xc, yc, r_obs, n)
+                mesh, uh_n, uh, ph, phiFun, chiFun = self.solve_conforming_timestep(
+                    xc, yc, Lx, Ly, r_obs, n, t, rho, dt, mu, R, 
+                    inflow_id, walls_ids, f, us_expr, old_uh_n=uh_n)
+            else:
+                solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+                phiFun.interpolate(phi_expr)
+                chiFun.interpolate(chi_expr)
+                uh_n.assign(uh)
 
-            solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-
-            # Save solution to file (VTK/PVD)
-            phiFun.interpolate(phi_expr)
-            chiFun.interpolate(chi_expr)
             saveVTK(file_dict, t_val, uh, ph, phiFun, chiFun)
 
             # Update previous solution
             uh_n.assign(uh)
 
             # Print max velocity
-            print('\tu max:', uh.dat.data.max())
+            print('\tu_max:', uh.dat.data.max())
+
+            # Save the results in a checkpoint file for post-processing
+            if self.conforming and self.moving:
+                with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                    chk.save_mesh(mesh)
+                
+            with CheckpointFile(basedir_vel + 'velocity_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                chk.save_function(uh, name='velocity')
+
+            with CheckpointFile(basedir_pres + 'pressure_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                chk.save_function(ph, name='pressure')
+
+            with CheckpointFile(basedir_phi + 'phi_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                chk.save_function(phiFun, name='phi')
+
+            with CheckpointFile(basedir_chi + 'chi_t={:.2f}.h5'.format(t_val), 'w') as chk:
+                chk.save_function(chiFun, name='chi')
 
         wall_time = time() - t_start
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
+
+    def solve_conforming_timestep(self, xc, yc, Lx, Ly, r_obs, n, t, rho, dt, mu, R, inflow_id, walls_ids, f, us_expr, old_uh_n):
+        # 1. Nuova mesh geometrica reale
+        mesh = conforming_mesh(Lx, Ly, xc, yc, r_obs, n)
+        
+        # 2. Aggiornamento spazi sulla nuova topologia
+        V = VectorFunctionSpace(mesh, "CG", 2)
+        Q = FunctionSpace(mesh, "CG", 1)
+        W = V * Q
+        DG1 = FunctionSpace(mesh, 'DG', 1)
+        
+        # 3. Interpolazione sicura del timestep precedente (gestisce il buco geometrico)
+        current_uh_n = Function(V)
+        if old_uh_n is not None:
+            current_uh_n.interpolate(old_uh_n, allow_missing_dofs=True)
+        else:
+            current_uh_n.assign(0.0)
+        
+        # 4. Inizializzazione incognite correnti
+        sol = Function(W)
+        uh, ph = sol.subfunctions
+        
+        # 5. Geometria differenziale e profili
+        x, y = SpatialCoordinate(mesh)
+        inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0 * y * (1.0 - y), 0.0))
+        
+        phiFun = Function(DG1)
+        chiFun = Function(DG1)
+        phi_expr = self.obstacle.distExpr(mesh, t)
+        chi_expr = self.obstacle.chi(mesh, t)
+        phiFun.interpolate(phi_expr)
+        chiFun.interpolate(chi_expr)
+        
+        w = us_expr if (self.conforming and self.moving) else Constant((0.0, 0.0))
+        
+        # 6. Condizioni al contorno
+        cylinder_velocity = us_expr if self.moving else Constant((0.0, 0.0))
+        
+        bcs = [
+            DirichletBC(W.sub(0), inflow_profile, inflow_id),
+            DirichletBC(W.sub(0), Constant((0, 0)), walls_ids),
+            DirichletBC(W.sub(0), cylinder_velocity, 5) # Tag 5 = Cylinder Boundary
+        ]
+        
+        # 7. Forme variazionali accoppiate sulla mesh corrente
+        u, p = TrialFunctions(W)
+        v, q = TestFunctions(W)
+        
+        a = Constant(rho)/Constant(dt)*inner(u, v)*dx \
+             + Constant(rho)*inner(dot(current_uh_n - w, nabla_grad(u)), v)*dx \
+             + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+             - div(v)*p*dx \
+             + div(u)*q*dx \
+             + Constant(R) * inner(u, v) * chi_expr * dx
+        
+        L = Constant(rho)/Constant(dt)*inner(current_uh_n, v)*dx \
+             + inner(f, v)*dx \
+             + Constant(R) * inner(us_expr, v) * chi_expr * dx
+
+        # 8. Risoluzione locale e isolata del sistema lineare
+        solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+        
+        # Ritorna tutti gli oggetti freschi e coerenti allocati su QUESTO singolo dominio
+        return mesh, current_uh_n, uh, ph, phiFun, chiFun
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes Brinkman solver script')

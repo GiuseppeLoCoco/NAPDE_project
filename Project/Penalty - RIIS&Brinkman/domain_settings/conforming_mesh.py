@@ -37,6 +37,23 @@ def conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n):
     model.mesh.setSize(model.getEntities(0), res)
     model.mesh.generate(2)
 
-    m = Mesh(model)
+    # Added part (see better)
+
+    # 1. Forza GMSH a usare il formato MSH versione 2 (altamente raccomandato per Firedrake)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    
+    # 2. Salva la mesh in un file temporaneo
+    mesh_filename = "mesh_conforming_temp.msh"
+    gmsh.write(mesh_filename)
+    
+    # 3. Finalizza GMSH per liberare la memoria ed evitare conflitti in run successivi
     gmsh.finalize()
+
+    # 4. Inizializza la Mesh di Firedrake passandogli il PATH del file appena creato
+    m = Mesh(mesh_filename)
+
+    import os
+    if os.path.exists(mesh_filename):
+        os.remove(mesh_filename)
+    
     return m
