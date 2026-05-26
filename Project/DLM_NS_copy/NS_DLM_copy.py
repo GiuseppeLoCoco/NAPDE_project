@@ -200,7 +200,7 @@ class NS_DLM_Solver:
         R = VectorFunctionSpace(mesh, 'P', fem_degree['displacement_degree'])  
         Z = VectorFunctionSpace(mesh, 'P', fem_degree['lagrange_degree'])      
 
-        test = TestFunction(R) 
+
         solid_variables = dict()
 
         Dp_ = [Function(R) for _ in range(3)]
