@@ -14,6 +14,9 @@ import os
 import argparse
 from matplotlib import pyplot as plt
 from math import cos, pi as PI
+import matplotlib.pyplot as plt
+from firedrake import FunctionSpace, Function, sqrt, inner
+from firedrake.pyplot import triplot, tripcolor, quiver
 
 from obstacles import circleObstacle
 
@@ -46,9 +49,8 @@ class Brinkman_solver:
         y_obs = 0.5
         x_obs = y_obs
         r_obs = 0.1
-        n = 50
+        n = 25
 
-        # self.conforming = True;
         self.conforming = False;
 
         if self.conforming:
@@ -78,7 +80,7 @@ class Brinkman_solver:
         if self.conforming:
             R = 0
         else:
-            R = n*20.0
+            R = 1000.0
 
         self.obstacle = circleObstacle(y_obs, y_obs, r_obs)       
 
@@ -212,7 +214,7 @@ class Brinkman_solver:
             yc = self.obstacle.y_obs
     
             if self.conforming and self.moving:
-                mesh, uh_n, uh, ph, phiFun, chiFun = self.solve_conforming_timestep(
+                mesh, uh_n, uh, ph, phiFun, chiFun, bcs = self.solve_conforming_timestep(
                     xc, yc, Lx, Ly, r_obs, n, t, rho, dt, mu, R, 
                     inflow_id, walls_ids, f, us_expr, old_uh_n=uh_n)
             else:
@@ -246,31 +248,35 @@ class Brinkman_solver:
             with CheckpointFile(basedir_chi + 'chi_t={:.2f}.h5'.format(t_val), 'w') as chk:
                 chk.save_function(chiFun, name='chi')
 
+            self.plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
+
         wall_time = time() - t_start
+
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
 
+
     def solve_conforming_timestep(self, xc, yc, Lx, Ly, r_obs, n, t, rho, dt, mu, R, inflow_id, walls_ids, f, us_expr, old_uh_n):
-        # 1. Nuova mesh geometrica reale
+
+        # Updated mesh for the current time step
         mesh = conforming_mesh(Lx, Ly, xc, yc, r_obs, n)
         
-        # 2. Aggiornamento spazi sulla nuova topologia
+        # Update the functional spaces on the new mesh
         V = VectorFunctionSpace(mesh, "CG", 2)
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
         DG1 = FunctionSpace(mesh, 'DG', 1)
         
-        # 3. Interpolazione sicura del timestep precedente (gestisce il buco geometrico)
+        # Interpolation of the previous velocity solution
         current_uh_n = Function(V)
         if old_uh_n is not None:
             current_uh_n.interpolate(old_uh_n, allow_missing_dofs=True)
         else:
             current_uh_n.assign(0.0)
         
-        # 4. Inizializzazione incognite correnti
+        # Initialize solution functions on the new mesh
         sol = Function(W)
         uh, ph = sol.subfunctions
         
-        # 5. Geometria differenziale e profili
         x, y = SpatialCoordinate(mesh)
         inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0 * y * (1.0 - y), 0.0))
         
@@ -283,16 +289,15 @@ class Brinkman_solver:
         
         w = us_expr if (self.conforming and self.moving) else Constant((0.0, 0.0))
         
-        # 6. Condizioni al contorno
+        # Boundary conditions on the new mesh
         cylinder_velocity = us_expr if self.moving else Constant((0.0, 0.0))
-        
         bcs = [
             DirichletBC(W.sub(0), inflow_profile, inflow_id),
             DirichletBC(W.sub(0), Constant((0, 0)), walls_ids),
             DirichletBC(W.sub(0), cylinder_velocity, 5) # Tag 5 = Cylinder Boundary
         ]
         
-        # 7. Forme variazionali accoppiate sulla mesh corrente
+        # Variational problem 
         u, p = TrialFunctions(W)
         v, q = TestFunctions(W)
         
@@ -307,11 +312,85 @@ class Brinkman_solver:
              + inner(f, v)*dx \
              + Constant(R) * inner(us_expr, v) * chi_expr * dx
 
-        # 8. Risoluzione locale e isolata del sistema lineare
+        # Solver
         solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
         
-        # Ritorna tutti gli oggetti freschi e coerenti allocati su QUESTO singolo dominio
-        return mesh, current_uh_n, uh, ph, phiFun, chiFun
+        # Return the new results on the updated mesh
+        return mesh, current_uh_n, uh, ph, phiFun, chiFun, bcs
+    
+
+    def plot_results(self, mesh, uh, ph, t_val, basedir):
+
+        # Create a figure with 3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+        time = f" a t = {t_val:.2f}" if t_val is not None else ""
+
+        # ==========================================
+        # MESH PLOT
+        # ==========================================
+
+        axes[0].set_title(f"Mesh{time}")
+        triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.5})
+        axes[0].set_aspect('equal')
+
+
+        # ==========================================
+        # PRESSURE PLOT
+        # ==========================================
+
+        axes[1].set_title(f"Pressure (p){time}")
+        # tripcolor mappa i valori scalari in colori
+        plot_p = tripcolor(ph, axes=axes[1], cmap='coolwarm')
+        fig.colorbar(plot_p, ax=axes[1], orientation='vertical', fraction=0.046, pad=0.04)
+        axes[1].set_aspect('equal')
+
+
+        # ==========================================
+        # VELOCITY PLOT
+        # ==========================================
+
+        axes[2].set_title(f"Velocity (u){time}")
+        V_scalar = FunctionSpace(mesh, "CG", 1)
+        u_mag = Function(V_scalar)
+        u_mag.interpolate(sqrt(inner(uh, uh)))
+
+        plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
+        fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
+        
+        """
+        V_cg1_vec = VectorFunctionSpace(mesh, "CG", 1)
+        uh_cg1 = Function(V_cg1_vec).interpolate(uh)
+        
+        x_coords = mesh.coordinates.dat.data_ro[:, 0]
+        y_coords = mesh.coordinates.dat.data_ro[:, 1]
+
+        U_vel = uh_cg1.dat.data_ro[:, 0]
+        V_vel = uh_cg1.dat.data_ro[:, 1]
+        """
+
+        coarse_mesh = RectangleMesh(24, 8, 3, 1) 
+        V_coarse = VectorFunctionSpace(coarse_mesh, "CG", 1)
+
+        uh_coarse = Function(V_coarse).interpolate(uh, allow_missing_dofs=True)
+
+        x_coarse = coarse_mesh.coordinates.dat.data_ro[:, 0]
+        y_coarse = coarse_mesh.coordinates.dat.data_ro[:, 1]
+        U_coarse = uh_coarse.dat.data_ro[:, 0]
+        V_coarse = uh_coarse.dat.data_ro[:, 1]
+
+        axes[2].quiver(x_coarse, y_coarse, U_coarse, V_coarse, 
+                       color='black', scale=40, width=0.001, headwidth=2, pivot='mid')
+
+        axes[2].set_aspect('equal')
+
+        plt.tight_layout()
+
+        plot_dir = basedir + 'plots/'
+        if not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+        plt.savefig(plot_dir + f'plot_t={t_val:.2f}.png', dpi=200)
+        plt.close(fig)
     
 
 if __name__ == '__main__':
