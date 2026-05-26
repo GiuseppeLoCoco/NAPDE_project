@@ -40,14 +40,14 @@ class RIIS_solver:
         # start total timer
         t_start = time()
 
-        ########## DATA AND SOLVE
+        # =========== DATA AND SOLVE ===========
         tol = 1e-10
 
         # Create mesh
         Lx, Ly = 3, 1
         x_obs = 0.5
         y_obs = 0.5 * Ly
-        n = 70
+        n = 25
         r_obs = 0.1
         eps = 8.0 / n
 
@@ -63,7 +63,7 @@ class RIIS_solver:
 
         
         # Data
-        T_end = 1.0            # final time
+        T_end = 10.0            # final time
         num_steps = 20    # number of time steps
         dt = T_end / num_steps # time step size
         mu = 0.1         # dynamic viscosity
