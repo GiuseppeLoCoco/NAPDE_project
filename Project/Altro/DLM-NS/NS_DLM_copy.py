@@ -200,7 +200,7 @@ class NS_DLM_Solver:
         R = VectorFunctionSpace(mesh, 'P', fem_degree['displacement_degree'])  
         Z = VectorFunctionSpace(mesh, 'P', fem_degree['lagrange_degree'])      
 
-        test = TestFunction(R) 
+
         solid_variables = dict()
 
         Dp_ = [Function(R) for _ in range(3)]
@@ -258,7 +258,7 @@ class NS_DLM_Solver:
         # ---------------------------------
 
         # Delta-interpolation for the Fluid-Structure interaction 
-        fsi_interpolation = compile_cpp_code(fsi_interpolation_code)
+        fsi_interpolation = FSIInterpolation()
         fsi_interpolation.create_bounding_box(solid_mesh.mesh)
         fsi_interpolation.calculate_fluid_mesh_size_h(fluid_mesh.mesh)
         fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")

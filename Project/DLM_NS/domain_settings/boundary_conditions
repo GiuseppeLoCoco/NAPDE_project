@@ -11,7 +11,7 @@ def time_varying_bc(tt):
     t_param.assign(tt)
 
 def create_boundary_conditions(fluid_mesh, **V):
-    inflow_profile = self.get_inflow_profile(fluid_mesh.mesh)
+    inflow_profile = get_inflow_profile(fluid_mesh.mesh)
     bcu_inflow_x = DirichletBC(V['fluid'][0], inflow_profile, 1)
     bcu_walls_x = DirichletBC(V['fluid'][0], Constant(0.0), 3)
     bcu_inflow_y = DirichletBC(V['fluid'][0], Constant(0.0), 1)
@@ -22,7 +22,6 @@ def create_boundary_conditions(fluid_mesh, **V):
     bcp_outflow = DirichletBC(V['fluid'][1], Constant(0.0), 2)
     bcp = [bcp_outflow]
 
-    bcPSI = DirichletBC(V['fluid'][1], Constant(0.0), "on_boundary")
 
-    return dict(velocity=bcu, pressure=bcp, streamfunction=bcPSI)
+    return dict(velocity=bcu, pressure=bcp)
 
