@@ -109,13 +109,11 @@ class NS_DLM_Solver:
         # --------------------------------
         # Initialize Lagrage Multiplier Variational Problem
         # --------------------------------
-        
-        Y = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['displacement_degree'])                                             
-        Z2 = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['lagrange_degree'])  
-        Lm = TrialFunction(Z2)
-        e = TestFunction(Z2)
-        uf_ = Function(Y) #velocità del fluido interpolata sulla mesh del solido
-        us_ = Function(Y) #velocità del solido
+         
+        Lm = TrialFunction(Z)
+        e = TestFunction(Z)
+        uf_ = Function(R) #velocità del fluido interpolata sulla mesh del solido
+        us_ = Function(R) #velocità del solido
         us_.assign(0.0)
 
         Lm_ = [Function(Z2), Function(Z2)]
@@ -125,12 +123,13 @@ class NS_DLM_Solver:
 
         # Create boundary conditions for the fluid problem
 
+        bcs = create_boundary_conditions(fluid_mesh, **FS)
 
 
         # ---------------------------------
 
         # Delta-interpolation for the Fluid-Structure interaction 
-        fsi_interpolation = compile_cpp_code(fsi_interpolation_code)
+        fsi_interpolation = FSIInterpolation()
         fsi_interpolation.create_bounding_box(solid_mesh.mesh)
         fsi_interpolation.calculate_fluid_mesh_size_h(fluid_mesh.mesh)
         fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
@@ -188,6 +187,9 @@ class NS_DLM_Solver:
 
             #================
             #BCs da sistemare
+            # Update the boundary conditions
+            time_varying_bc(t)
+
             #================
             
 
