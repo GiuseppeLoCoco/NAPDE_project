@@ -33,8 +33,13 @@ def saveVTK(file_dict, t, uh, ph, phi, chi):
 class Brinkman_solver:
 
     def __init__(self, conforming=True, moving=True):
+
         self.conforming = conforming
         self.moving = moving
+        self.symmetric = True
+        self.unsteady = False
+        self.instationary = True
+        self.mean = True
 
     def Brinkman_solve(self, args=None):
 
@@ -47,11 +52,20 @@ class Brinkman_solver:
 
         Lx, Ly = 3, 1
         y_obs = 0.5
-        x_obs = y_obs
-        r_obs = 0.1
-        n = 25
 
-        self.conforming = False;
+        if self.symmetric:
+            x_obs = y_obs
+            print("\nSymmetric configuration: cylinder centered in the channel")
+        else:
+            y_obs = 0.48
+            x_obs = 0.5
+            Lx = 4
+            print("\nAsymmetric configuration: cylinder moved higher in the channel")
+
+        r_obs = 0.1
+        n = 100
+
+        self.conforming = True;
 
         if self.conforming:
             mesh = conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n)
@@ -64,11 +78,40 @@ class Brinkman_solver:
         # ==================================
 
         tol = 1e-10
-        T_end = 10.0            # final time
-        num_steps = 20          # number of time steps
-        dt = T_end / num_steps  # time step size
-        mu = 0.1                # dynamic viscosity
-        rho = 1                 # density
+
+        T_end = 10.0            # Final time
+        num_steps = 20          # Number of time steps
+        dt = T_end / num_steps  # Time step size
+        
+        # Dynamic viscosity
+        if self.unsteady:
+            mu = 0.0015
+        else:
+            mu = 0.0070
+
+        # Density
+        rho = 1       
+
+        # Characteristic velocity
+        u_max = 1.0                 # max velocity
+        u_mean = 0.667              # mean velocity
+
+        # Choose between u_max and u_mean for the charateristic velocity
+        # in order to compute the Reynolds number
+        if self.mean:
+            u_char = u_mean
+        else:
+            u_char = u_max
+
+        Re = rho * (2*r_obs) * u_char / mu 
+        print("\nReynolds number Re = {} computed with u_characteristic = {}".format(Re, u_char))
+
+        if Re > 80:
+            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
+            self.unsteady = True
+        else:
+            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
+            self.unsteady = False
 
         f  = Constant((0, 0))
         t = Constant(0.0)
@@ -142,6 +185,11 @@ class Brinkman_solver:
               + inner(f, v)*dx \
               + Constant(R) * inner(us_expr, v)* chi_expr * dx
 
+
+        # =========================================
+        # Create the folder
+        # =========================================
+
         if self.conforming:
             dir1 = 'conforming/'
         else:
@@ -150,12 +198,27 @@ class Brinkman_solver:
         if self.moving:
             dir2 = 'moving/'
         else:
-            dir2 = 'steady/'
+            dir2 = 'fixed/'
 
-        if self.conforming:
-            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'/'
+        if self.unsteady:
+            dir3 = 'unsteady/'
+            if self.symmetric:
+                dir4 = 'symmetric/'
+            else:
+                dir4 = 'asymmetric/'
         else:
-            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
+            dir3 = 'steady/'
+
+        if self.unsteady:
+            if self.conforming:
+                basedir = 'cyl/'+dir1+dir2+dir3+dir4+'n'+str(n)+'/'
+            else:
+                basedir = 'cyl/'+dir1+dir2+dir3+dir4+'n'+str(n)+'_R'+str(R)+'/'
+        else:
+            if self.conforming:
+                basedir = 'cyl/'+dir1+dir2+dir3+'n'+str(n)+'/'
+            else:
+                basedir = 'cyl/'+dir1+dir2+dir3+'n'+str(n)+'_R'+str(R)+'/'
 
         if not os.path.exists(basedir):
             os.makedirs(basedir)
@@ -171,6 +234,8 @@ class Brinkman_solver:
         for folder in subdirs:
             if not os.path.exists(folder):
                 os.makedirs(folder)
+
+        # =========================================
 
         # Create VTK files for visualization output
         xdmffile_u = VTKFile(basedir+'velocity.pvd')

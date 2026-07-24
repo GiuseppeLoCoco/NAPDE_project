@@ -2,6 +2,10 @@ from firedrake import *
 from utilities import *
 from user_inputs import *
 from common import *
+from firedrake.mg.interface import prolong
+from scipy.sparse import lil_matrix,csr_matrix
+from firedrake.petsc import PETSc
+import petsc4py
 from time import time
 import vtk_py3 as vtk_py3
 import numpy as np
@@ -10,8 +14,6 @@ import math, os, operator, copy, sys, io, json, vtk, matplotlib, cppimport, argp
 matplotlib.use('Agg')
 from matplotlib import rc, pylab as plt
 import inspect
-from ast import Constant
-from symtable import Function
 
 """
 def saveVTK(file_dict, t, uh, ph, phi, chi):
@@ -272,12 +274,17 @@ class NS_DLM_Solver:
 
         # ---------------------------------
 
-        # Delta-interpolation for the Fluid-Structure interaction 
+        # Delta-interpolation for the Fluid-Structure interaction
+        """ 
         fsi_interpolation = compile_cpp_code(fsi_interpolation_code)
         fsi_interpolation.create_bounding_box(solid_mesh.mesh)
         fsi_interpolation.calculate_fluid_mesh_size_h(fluid_mesh.mesh)
         fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
         fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
+        """
+
+        # Dove Lm_f è definito in Z1 (Fluid) e Lm_[1] è definito in Z2 (Solid)
+        self.delta_interpolation(Lm_[1], Lm_f)
 
         # ---------------------------------
 
@@ -346,9 +353,6 @@ class NS_DLM_Solver:
                     update_counter(counters)
                     t += tsp
 
-                    # Create the counding box of the solid mesh for the interpolation
-                    fsi_interpolation.create_bounding_box(solid_mesh.mesh)
-
                     # Update the boundary conditions
                     time_varying_bc(t)
 
@@ -358,7 +362,7 @@ class NS_DLM_Solver:
 
                     # Interpolate the Lagrange multiplier from the solid mesh to
                     # the fluid mesh (for the computation of the tentative velocity)
-                    Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
+                    self.delta_interpolation(Lm_[0], Lm_f)
 
                     # ----------------------------------
 
@@ -378,7 +382,7 @@ class NS_DLM_Solver:
                     # Interpolate the velocity on the solid mesh in order to obtain 
                     # the new Lagrange multiplier lambda(n+1)
                     timer_si.start()
-                    uf_.assign(interpolate_nonmetching_mesh_delta(fsi_interpolation, uv, "S"))
+                    self.delta_interpolation(uv, uf_)
                     si += timer_si.stop()
 
                     # Update the solid position 
@@ -394,8 +398,8 @@ class NS_DLM_Solver:
                     # ================================
 
                     # The final corrective step for velocity
-                    Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
-                    Lm_f_old.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
+                    self.delta_interpolation(Lm_[0], Lm_f)
+                    self.delta_interpolation(Lm_[1], Lm_f_old)
                     bDLM = self.assemble_velocity_correction_DLM(u_[0], Lm_f, Lm_f_old, dt)
                     print(BLUE % "4: Velocity correction step", flush = True)
                     timer_s4.start()
@@ -472,7 +476,7 @@ class NS_DLM_Solver:
         
         # Sostituzione di Expression con l'estrazione geometrica esplicita in Firedrake
         
-        displ_x = (self.amplitude * 0.5 * (1.0 - cos(0.2 * pi * t)))
+        displ_x = (self.amplitude * 0.5 * (1.0 - math.cos(0.2 * math.pi * t)))
         displ_y = 0.0
         
         # Interpolazione analitica UFL su spazio discreto
@@ -484,6 +488,22 @@ class NS_DLM_Solver:
 
         us_.assign(0.0)
         us_.vector().axpy(1.0 / float(dt), Dp_[1].vector())
+
+    
+    def delta_interpolation(self, f_src, target, allow_missing=True):
+        """
+        Interpola f_src (da una mesh sorgente) verso una Function o FunctionSpace target.
+        """
+        if isinstance(target, Function):
+            f_dest = target
+        elif isinstance(target, FunctionSpace):
+            f_dest = Function(target)
+        else:
+            raise TypeError("L'argomento 'target' deve essere un FunctionSpace o una Function.")
+
+        # Interpolazione nativa Firedrake per mesh non coincidenti
+        f_dest.interpolate(f_src, allow_missing_dofs=allow_missing)
+        return f_dest
 
     
     def optimized_rhs(self, ui, X1, u, p):
@@ -549,24 +569,24 @@ class NS_DLM_Solver:
         solve(A, x, b, solver_parameters={'ksp_type': 'bicgstab', 'pc_type': 'sor'})
 
     
-    #Da correggere
+    # Da correggere
     def update_variables(self,u_components):
-    u_ = update[0]
-    p_ = update[1]
+        u_ = update[0]
+        p_ = update[1]
 
-    for ui in range(u_components):
-        u_[2][ui].assign(u_[1][ui])
-        u_[1][ui].assign(u_[0][ui]) 
-    p_[2].assign(p_[1])    
-    p_[1].assign(p_[0])
+        for ui in range(u_components):
+            u_[2][ui].assign(u_[1][ui])
+            u_[1][ui].assign(u_[0][ui]) 
+            p_[2].assign(p_[1])    
+            p_[1].assign(p_[0])
 
-    #Chiedere per questo pezzo
-    if problem_physics['solve_FSI'] == True:
-        self.Dp_ = update[2]
-        self.Lm_ = update[3]
+        # Chiedere per questo pezzo
+        if problem_physics['solve_FSI'] == True:
+            self.Dp_ = update[2]
+            self.Lm_ = update[3]
 
-        self.Dp_[2].assign(self.Dp_[1])
-        self.Lm_[1].assign(self.Lm_[0])
+            self.Dp_[2].assign(self.Dp_[1])
+            self.Lm_[1].assign(self.Lm_[0])
 
     def calc_vorticity_streamfunction(self, u, bcs):
         p = self.p; q = self.q; dx = self.dx
