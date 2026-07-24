@@ -3,6 +3,14 @@ from ufl import tensors
 
 restart = False									
 
+# Geometry and mesh parameters
+Lx = 2.2
+Ly = 0.41
+n = 30
+x_obs = 0.2
+y_obs = 0.2
+r_obs = 0.05
+
 problem_physics = dict(
     solve_temperature=False,				
     solve_FSI=True,						
@@ -14,19 +22,11 @@ problem_physics = dict(
 	
 def f_dir(dim):									
     # Vettore unitario UFL
-    n = -1 * tensors.unit_vector(1, dim) 
-    return n
+    vec = -1 * tensors.unit_vector(1, dim) 
+    return vec
 
 interpolation_fx = 'phi4'
 
-"""stabilization_parameters = dict(	
-    SUPG_NS=False,						
-    PSPG_NS=False,								
-    crosswind_NS=False,					
-    SUPG_HT=False,						
-    crosswind_HT=False					
-)
-"""
 alpha = Constant(0.85)                   	  	
 C_cw = Constant(0.7)                       		
 
