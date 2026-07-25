@@ -1,6 +1,5 @@
 import os
 from firedrake import *
-from firedrake import VTKFile
 from firedrake.pyplot import triplot, tripcolor
 import matplotlib.pyplot as plt
 
@@ -43,23 +42,22 @@ def save_checkpoint(basedir, t_val, mesh=None, moving=False, **kwargs):
             chk.save_mesh(mesh)
 
 
-def plot_results(mesh, uh, ph, t_val, basedir):
+def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
     """
     Crea e salva un'immagine con i plot di mesh, pressione e velocità.
+    Se passato `solid_mesh`, sovrappone la geometria del cilindro solido in rosso.
     """
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     time_str = f" a t = {t_val:.2f}" if t_val is not None else ""
 
-    # Plot della Mesh
+    # Plot della Mesh Fluida
     axes[0].set_title(f"Mesh{time_str}")
-    triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.5})
-    axes[0].set_aspect('equal')
-
+    triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.3})
+    
     # Plot della Pressione
     axes[1].set_title(f"Pressure (p){time_str}")
     plot_p = tripcolor(ph, axes=axes[1], cmap='coolwarm')
     fig.colorbar(plot_p, ax=axes[1], orientation='vertical', fraction=0.046, pad=0.04)
-    axes[1].set_aspect('equal')
 
     # Plot della Velocità
     axes[2].set_title(f"Velocity (u){time_str}")
@@ -68,7 +66,7 @@ def plot_results(mesh, uh, ph, t_val, basedir):
     plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
     fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
 
-    # Aggiunta quiver plot per la direzione della velocità
+    # Quiver plot per direzione velocità
     x_coords = mesh.coordinates.dat.data_ro[:, 0]
     y_coords = mesh.coordinates.dat.data_ro[:, 1]
     coarse_mesh = RectangleMesh(24, 8, max(x_coords), max(y_coords))
@@ -77,10 +75,17 @@ def plot_results(mesh, uh, ph, t_val, basedir):
     x_coarse = coarse_mesh.coordinates.dat.data_ro[:, 0]
     y_coarse = coarse_mesh.coordinates.dat.data_ro[:, 1]
     U_coarse = uh_coarse.dat.data_ro[:, 0]
-    V_coarse = uh_coarse.dat.data_ro[:, 1]
-    axes[2].quiver(x_coarse, y_coarse, U_coarse, V_coarse,
+    V_coarse_val = uh_coarse.dat.data_ro[:, 1]
+    axes[2].quiver(x_coarse, y_coarse, U_coarse, V_coarse_val,
                    color='black', scale=40, width=0.001, headwidth=2, pivot='mid')
-    axes[2].set_aspect('equal')
+
+    # Sovrapposizione del cilindro solido (se presente)
+    if solid_mesh is not None:
+        for ax in axes:
+            triplot(solid_mesh, axes=ax, interior_kw={"color": "red", "linewidth": 0.6})
+
+    for ax in axes:
+        ax.set_aspect('equal')
 
     plt.tight_layout()
 

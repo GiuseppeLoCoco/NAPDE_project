@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 from domain_settings import *
 from user_inputs import *
 import math
+import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Timer:
@@ -42,8 +43,8 @@ class NS_DLM_Solver:
         # ==================================
 
         tol = 1e-10
-        T_end = 1.0             # final time
-        num_steps = 10          # number of time steps
+        T_end = 10.0             # final time
+        num_steps = 20          # number of time steps
         dt = T_end / num_steps  # time step size
         mu = 0.1                # dynamic viscosity
         rho = 1.0  
@@ -56,8 +57,8 @@ class NS_DLM_Solver:
         # --------------------------------
 
         # Define function spaces
-        V = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['velocity_degree'])		  
-        Q = FunctionSpace(fluid_mesh.mesh, 'P', fem_degree['pressure_degree'])		  
+        V = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['velocity_degree'])          
+        Q = FunctionSpace(fluid_mesh.mesh, 'P', fem_degree['pressure_degree'])        
         Z1 = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['lagrange_degree']) 
         W = V * Q
 
@@ -156,7 +157,6 @@ class NS_DLM_Solver:
         }
         basedir, file_dict = create_output_folders('DLM', params)
 
-
         # Time-stepping
         t_val = 0.0
         uh_n.assign(0.0)
@@ -208,10 +208,10 @@ class NS_DLM_Solver:
             solve(a3 == L3, uh, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
             uh_n.assign(uh)
 
-            # Save output
+            # Save output & plot con inclusione della mesh solida
             save_VTK(file_dict, t_val, uh, ph)
             save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
-            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir)
+            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir, solid_mesh=solid_mesh.mesh)
 
         wall_time = timer_total.stop()
         print("Total simulation wall time : {} sec".format(wall_time), "\n", flush=True)
