@@ -96,7 +96,7 @@ def create_output_folders(solver_name, params, extra_fields=None):
     Crea la directory di output e restituisce il percorso base e il dizionario per i file VTK.
     """
     extra_fields = extra_fields or []
-    path_parts = ['cyl', solver_name]
+    path_parts = ['..', 'Plots', 'cyl', solver_name]
 
     if params.get('moving'):
         path_parts.append('moving')

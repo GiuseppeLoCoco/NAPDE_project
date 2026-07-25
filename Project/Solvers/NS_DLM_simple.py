@@ -81,7 +81,9 @@ class NS_DLM_Solver:
 
         R = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['displacement_degree'])  
         Z = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['lagrange_degree']) 
-        Dp_ = [Function(R) for _ in range(3)]
+        Dp_new = Function(R)
+        Dp_old = Function(R)
+        Dp_inc = Function(R)
         us_ = Function(R) # solid velocity
         dx_solid = Measure("dx", domain=solid_mesh.mesh)
         ds_solid = Measure("ds", domain=solid_mesh.mesh)
@@ -180,20 +182,20 @@ class NS_DLM_Solver:
 
             # Update solid position and velocity
             x_solid = SpatialCoordinate(solid_mesh.mesh)
-            Dp_[2].assign(Dp_[1])
+            Dp_old.assign(Dp_new)
 
             # Calcola il nuovo spostamento Dp_[0]
             displ_x = (amplitude * 0.5 * (1.0 - math.cos(0.2 * math.pi * t_val)))
             displ_y = 0.0
-            Dp_[0].interpolate(as_vector([displ_x, displ_y]) + 0*x_solid)
+            Dp_new.interpolate(as_vector([displ_x, displ_y]) + 0*x_solid)
 
             # Calcola lo spostamento incrementale Dp_[1] = Dp_new - Dp_old
-            Dp_[1].assign(Dp_[0] - Dp_[2])
+            Dp_inc.assign(Dp_new - Dp_old)
 
             # Move solid mesh coordinates
-            solid_mesh.mesh.coordinates.assign(solid_mesh.mesh.coordinates + Dp_[1])
+            solid_mesh.mesh.coordinates.assign(solid_mesh.mesh.coordinates + Dp_inc)
 
-            us_.assign(Dp_[1] / Constant(dt))
+            us_.assign(Dp_inc / Constant(dt))
 
             # STEP 2: Solve Lagrange multiplier
             solve(a2 == L2, Lm_[0], solver_parameters={'ksp_type': 'bcgs', 'pc_type': 'sor'})
