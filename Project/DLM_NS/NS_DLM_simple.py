@@ -125,8 +125,6 @@ class NS_DLM_Solver:
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)
         # ---------------------------------
         fsi_interpolation = FSIInterpolation()
-        fsi_interpolation.create_bounding_box(solid_mesh.mesh)
-        fsi_interpolation.calculate_fluid_mesh_size_h(fluid_mesh.mesh)
         fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
         fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
 
@@ -169,7 +167,6 @@ class NS_DLM_Solver:
             print('t =', t_val)
             t.assign(t_val)
 
-            fsi_interpolation.create_bounding_box(solid_mesh.mesh)
             time_varying_bc(t_val)
 
             # Update Lagrange multiplier for new time step
