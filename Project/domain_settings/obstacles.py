@@ -1,8 +1,12 @@
+from ast import Constant
+
 from firedrake import *
 import numpy as np
 from math import pi as PI
 
+# ==========================
 # Define circular obstacle
+# ==========================
 class circleObstacle:
   def __init__(self, x, y, r, riis_epsilon=0.05):
     self.x_obs = x
@@ -39,7 +43,10 @@ class circleObstacle:
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
+
+# ==========================
 # Define segment obstacle
+# ==========================
 class lineObstacle:
   def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
     self.A_init = [xA, yA]
@@ -88,7 +95,7 @@ class lineObstacle:
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
-# Segment rotating counterclockwise
+# ------- Segment rotating counterclockwise --------
 class rotatingLineObstacle(lineObstacle):
   def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
     super().__init__(xA, yA, xB, yB, riis_epsilon)
@@ -125,3 +132,46 @@ class rotatingLineObstacle(lineObstacle):
     dx = self.B_init[0] - self.A_init[0]
     dy = self.B_init[1] - self.A_init[1]
     return dt * (dx * cos(th) - dy * sin(th))
+
+
+  # ==========================
+  # Define square obstacle
+  # ==========================
+  class squareObstacle:
+    def __init__(self, x, y, side_length=1.0, riis_epsilon=0.05):
+        self.x_obs = x
+        self.y_obs = y
+        self.side_length = side_length
+        self.half_side = side_length / 2.0
+        self.eps = riis_epsilon
+
+    def displ_x(self, t):
+        return Constant(0.0)
+
+    def displ_y(self, t):
+        return Constant(0.0)
+
+    def us_x(self, t):
+        return Constant(0.0)
+
+    def us_y(self, t):
+        return Constant(0.0)
+
+    def distExpr(self, mesh, t):
+        X = SpatialCoordinate(mesh)
+        # Distanze dai bordi lungo x e y
+        dx = conditional(X[0] - self.x_obs < 0, self.x_obs - X[0], X[0] - self.x_obs) - self.half_side
+        dy = conditional(X[1] - self.y_obs < 0, self.y_obs - X[1], X[1] - self.y_obs) - self.half_side
+        
+        # Max(dx, dy) per la distanza (SDF) dal quadrato
+        return conditional(dx > dy, dx, dy)
+
+    def chi(self, mesh, t):
+        dist = self.distExpr(mesh, t)
+        return conditional(dist < 0, 1.0, 0.0)
+
+    def delta(self, mesh, t):
+        from firedrake import pi, cos
+        dist = self.distExpr(mesh, t)
+        abs_dist = conditional(dist < 0.0, -dist, dist)
+        return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
