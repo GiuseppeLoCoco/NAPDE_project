@@ -69,7 +69,6 @@ time_control['T'] = time_control['tmax']
 fem_degree = dict(
     velocity_degree=2,
     pressure_degree=1,
-    temperature_degree=1, 
     displacement_degree=1,
     lagrange_degree=1
 )

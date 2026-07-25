@@ -1,4 +1,4 @@
-from firedrake import Mesh, Function, VectorFunctionSpace, FunctionSpace, File, SpatialCoordinate, CheckpointFile
+from firedrake import Mesh, RectangleMesh
 import numpy as np
 import os, csv, operator
 from os import listdir, path, makedirs
