@@ -9,6 +9,7 @@ from firedrake import *
 import argparse
 from math import cos, pi as PI
 
+from domain_settings import create_brinkman_riis_bcs, time_varying_bc
 from obstacles import circleObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
@@ -31,22 +32,12 @@ class Brinkman_solver:
         # CREATE MESH
         # ==================================
 
-        Lx, Ly = 3, 1
-        y_obs = 0.5
-
-        if self.symmetric:
-            x_obs = y_obs
+        if x_obs == y_obs:
             print("\nSymmetric configuration: cylinder centered in the channel")
         else:
-            y_obs = 0.48
-            x_obs = 0.5
-            Lx = 4
             print("\nAsymmetric configuration: cylinder moved higher in the channel")
 
-        r_obs = 0.1
-        n = 100
-
-        mesh = RectangleMesh(n, n//3, Lx, Ly)
+        mesh = RectangleMesh(n, int(n * Ly / Lx), Lx, Ly)
 
         # ==================================
         # DATA AND SOLVER
@@ -91,10 +82,6 @@ class Brinkman_solver:
         f  = Constant((0, 0))
         t = Constant(0.0)
 
-        # Coordinates for expressions
-        x, y = SpatialCoordinate(mesh)
-        inflow_profile = as_vector(((1.0 - exp(-t)) * 4.0*y*(1.0 - y), 0.0)) 
-
         R = 1000.0
 
         self.obstacle = circleObstacle(x_obs, y_obs, r_obs)       
@@ -104,15 +91,8 @@ class Brinkman_solver:
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
 
-        inflow_id = 1
-        outflow_id = 2
-        walls_ids = (3, 4)
-
         # Define boundary conditions
-        bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
-        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
-        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top]
+        bcs = create_brinkman_riis_bcs(W, mesh)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -177,6 +157,7 @@ class Brinkman_solver:
             t_val += dt
             print('t =', t_val)
             t.assign(t_val)
+            time_varying_bc(t_val)
 
             current_us_x = float(assemble(self.obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
 

@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 from firedrake import *
 import argparse
 from math import cos, pi as PI
+from domain_settings import create_brinkman_riis_bcs, time_varying_bc
 from obstacles import circleObstacle
 from post_processing import save_VTK, create_output_folders, plot_results, save_checkpoint
 
@@ -22,25 +23,19 @@ class RIIS_solver:
 
         # =========== DATA AND SOLVE ===========
         tol = 1e-10
-
-        # Create mesh
-        Lx, Ly = 3, 1
-        x_obs = 0.5
-        y_obs = 0.5 * Ly
-        n = 25
-        r_obs = 0.1
         eps = 8.0 / n
 
-        mesh = RectangleMesh(n, n // 3, Lx, Ly)
+        mesh = RectangleMesh(n, n // (Lx/Ly), Lx, Ly)
+
         # Define the obstacle
         self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
         
         # Data
-        T_end = 10.0            # final time
-        num_steps = 20    # number of time steps
-        dt = T_end / num_steps # time step size
-        mu = 0.1         # dynamic viscosity
-        rho = 1            # density
+        T_end = 10.0               # final time
+        num_steps = 20             # number of time steps
+        dt = T_end / num_steps     # time step size
+        mu = 0.1                   # dynamic viscosity
+        rho = 1                    # density
 
         # RIIS Penalty Parameters
         R = 1000.0
@@ -48,25 +43,13 @@ class RIIS_solver:
         f = Constant((0, 0))
         t = Constant(0.0)
 
-        x, y = SpatialCoordinate(mesh)
-        inflow_profile = as_vector(((1.0-exp(-t)) * 4.0*y*(1.0 - y), 0.0))
-
-        
-        # Define boundaries
-        inflow_id = 1
-        outflow_id = 2
-        walls_ids = (3, 4)
-
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
 
         # Define boundary conditions
-        bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
-        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
-        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top]
+        bcs = create_brinkman_riis_bcs(W, mesh)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -122,6 +105,7 @@ class RIIS_solver:
             t_val = (step + 1) * dt
             print('t =', t_val)
             t.assign(t_val)
+            time_varying_bc(t_val)
 
             current_us_x = float(assemble(self.obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
 

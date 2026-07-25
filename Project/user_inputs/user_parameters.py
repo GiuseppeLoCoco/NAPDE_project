@@ -8,7 +8,7 @@ Lx = 3
 Ly = 1
 n = 100
 x_obs = 0.5
-y_obs = 0.5
+y_obs = 0.5*Ly
 r_obs = 0.1
 
 problem_physics = dict(
