@@ -1,22 +1,13 @@
-from ast import Constant
 import sys
 import os
+from time import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
 
 from firedrake import *
-from firedrake import VTKFile
-from firedrake import CheckpointFile
-from domain_settings import *
-from time import time
-import numpy as np
-import os
 import argparse
-from matplotlib import pyplot as plt
 from math import cos, pi as PI
-import matplotlib.pyplot as plt
-from firedrake import FunctionSpace, Function, sqrt, inner
 
 from obstacles import circleObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
@@ -119,8 +110,9 @@ class Brinkman_solver:
 
         # Define boundary conditions
         bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
-        bcs = [bcu_inflow, bcu_walls]
+        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
+        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
+        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top]
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -164,7 +156,7 @@ class Brinkman_solver:
             'n': n,
             'R': R
         }
-        basedir, file_dict = create_output_folders('brinkman', params)
+        basedir, file_dict = create_output_folders('brinkman', params, extra_fields=['phi', 'chi'])
 
         # Time-stepping
         t_val = 0.0
@@ -176,9 +168,9 @@ class Brinkman_solver:
         phiFun.interpolate(phi_expr)
         chiFun.interpolate(chi_expr)
 
-        save_VTK(file_dict, t_val, uh, ph, phiFun, chiFun)
+        save_VTK(file_dict, t_val, uh, ph, phi=phiFun, chi=chiFun)
         
-        save_checkpoint(basedir, t_val, uh, ph, phiFun, chiFun, mesh, self.moving)
+        save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph, phi=phiFun, chi=chiFun)
 
         for step in range(num_steps):
             # Update current time
@@ -198,7 +190,7 @@ class Brinkman_solver:
             phiFun.interpolate(phi_expr)
             chiFun.interpolate(chi_expr)
             
-            save_VTK(file_dict, t_val, uh, ph, phiFun, chiFun)
+            save_VTK(file_dict, t_val, uh, ph, phi=phiFun, chi=chiFun)
 
             # Update previous solution
             uh_n.assign(uh)
@@ -206,7 +198,7 @@ class Brinkman_solver:
             # Print max velocity
             print('\tu_max:', uh.dat.data.max())
             
-            save_checkpoint(basedir, t_val, uh, ph, phiFun, chiFun)
+            save_checkpoint(basedir, t_val, mesh=None, moving=self.moving, velocity=uh, pressure=ph, phi=phiFun, chi=chiFun)
             plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
 
         wall_time = time() - t_start

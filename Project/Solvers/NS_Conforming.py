@@ -6,26 +6,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'U
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
 
 from firedrake import *
-from firedrake import VTKFile
-from firedrake import CheckpointFile
-import numpy as np
 import argparse
 from domain_settings import *
-from matplotlib import pyplot as plt
 from math import cos, pi as PI
 
 from obstacles import circleObstacle
-import matplotlib.pyplot as plt
-from firedrake import FunctionSpace, Function, sqrt, inner
-from firedrake.pyplot import triplot, tripcolor
-
-
-def saveVTK(file_dict, t, uh, ph):
-  uh.rename('u','u')
-  ph.rename('p','p')
-  file_dict['u'].write(uh, time=t)
-  file_dict['p'].write(ph, time=t)
-
+from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
     def __init__(self, moving=True):
@@ -94,9 +80,10 @@ class Conforming_solver:
 
         # Define boundary conditions
         bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
+        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
+        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
         bcu_obstacle = DirichletBC(W.sub(0), w, obstacle_id)
-        bcs = [bcu_inflow, bcu_walls, bcu_obstacle]
+        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top, bcu_obstacle]
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
@@ -107,45 +94,20 @@ class Conforming_solver:
         L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx \
               + inner(f,v)*dx
 
-        dir1 = 'conforming/'
-
-        if self.moving:
-            dir2 = 'moving/'
-        else:
-            dir2 = 'steady/'
-
-        basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'/'
-
-        if not os.path.exists(basedir):
-            os.makedirs(basedir)
-
-        basedir_vel = basedir + 'velocity/'
-        basedir_pres = basedir + 'pressure/'
-        basedir_mesh = basedir + 'mesh/'
-
-        subdirs = [basedir_vel, basedir_pres, basedir_mesh]
-
-        for folder in subdirs:
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-
-        # Create VTK files for visualization output
-        xdmffile_u = VTKFile(basedir+'velocity.pvd')
-        xdmffile_p = VTKFile(basedir+'pressure.pvd')
-        file_dict = {'u': xdmffile_u, 'p': xdmffile_p}
+        params = {
+            'moving': self.moving,
+            'unsteady': True, # Conforming is always unsteady in this setup
+            'symmetric': False, # Not applicable but needed for path
+            'n': n
+        }
+        basedir, file_dict = create_output_folders('conforming', params)
 
         # Time-stepping
         t_val = 0.0
         uh_n.assign(0.0)
 
-        saveVTK(file_dict, t_val, uh, ph)
-
-        if self.moving:
-            with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_mesh(mesh)
-        else:
-            with CheckpointFile(basedir_mesh + 'mesh.h5', 'w') as chk:
-                chk.save_mesh(mesh)
+        save_VTK(file_dict, t_val, uh, ph)
+        save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph)
 
         for step in range(num_steps):
 
@@ -166,23 +128,13 @@ class Conforming_solver:
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
             # Save solution to file (VTK/PVD)
-            saveVTK(file_dict, t_val, uh, ph)
+            save_VTK(file_dict, t_val, uh, ph)
 
             # Update previous solution
             uh_n.assign(uh)
 
-            # Save the results in a checkpoint file for post-processing
-            if self.moving:
-                with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                    chk.save_mesh(mesh)
-                
-            with CheckpointFile(basedir_vel + 'velocity_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(uh, name='velocity')
-
-            with CheckpointFile(basedir_pres + 'pressure_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(ph, name='pressure')
-
-            self.plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
+            save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph)
+            plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
 
             # Print max velocity
             print('\tu_max:', uh.dat.data.max())
@@ -190,36 +142,6 @@ class Conforming_solver:
         wall_time = time() - t_start
 
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
-
-
-    def plot_results(self, mesh, uh, ph, t_val, basedir):
-
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        time = f" a t = {t_val:.2f}" if t_val is not None else ""
-
-        axes[0].set_title(f"Mesh{time}")
-        triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.5})
-        axes[0].set_aspect('equal')
-
-        axes[1].set_title(f"Pressure (p){time}")
-        plot_p = tripcolor(ph, axes=axes[1], cmap='coolwarm')
-        fig.colorbar(plot_p, ax=axes[1], orientation='vertical', fraction=0.046, pad=0.04)
-        axes[1].set_aspect('equal')
-
-        axes[2].set_title(f"Velocity (u){time}")
-        V_scalar = FunctionSpace(mesh, "CG", 1)
-        u_mag = Function(V_scalar).interpolate(sqrt(inner(uh, uh)))
-        plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
-        fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
-        axes[2].set_aspect('equal')
-
-        plt.tight_layout()
-
-        plot_dir = basedir + 'plots/'
-        if not os.path.exists(plot_dir):
-            os.makedirs(plot_dir)
-        plt.savefig(plot_dir + f'plot_t={t_val:.2f}.png', dpi=200)
-        plt.close(fig)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes Conforming solver script')

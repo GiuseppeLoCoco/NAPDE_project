@@ -1,12 +1,14 @@
 from firedrake import *
+import sys
+import os
+from time import time, perf_counter
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
 from domain_settings import *
 from user_inputs import *
-from time import time, perf_counter
-import numpy as np
-import math, os, operator, copy, sys, io, json, matplotlib
-matplotlib.use('Agg')
-from matplotlib import rc, pylab as plt
-
+import math
+from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Timer:
     def __init__(self):
@@ -21,23 +23,9 @@ class Timer:
 
 timer_total = Timer()
 
-
-def saveVTK(file_dict, t, uh, ph, phi=None, chi=None):
-    uh.rename('u', 'u')
-    ph.rename('p', 'p')
-    file_dict['u'].write(uh, time=t)
-    file_dict['p'].write(ph, time=t)
-    if phi is not None and chi is not None:
-        phi.rename('phi', 'phi')
-        chi.rename('chi', 'chi')
-        file_dict['phi'].write(phi, time=t)
-        file_dict['chi'].write(chi, time=t)
-
-
 class NS_DLM_Solver:
 
-    def __init__(self, conforming=False, moving=True):
-        self.conforming = conforming
+    def __init__(self, moving=True):
         self.moving = moving
 
     def NS_DLM_Solve(self, args=None):
@@ -157,6 +145,16 @@ class NS_DLM_Solver:
         L3 = Constant(rho)/Constant(dt)*inner(u_star, v_v)*dx_fluid \
               + inner(Lm_f - Lm_f_old, v_v)*dx_fluid
 
+        # Setup output folders
+        params = {
+            'moving': self.moving,
+            'unsteady': True,
+            'symmetric': False, # Placeholder
+            'n': n
+        }
+        basedir, file_dict = create_output_folders('DLM', params)
+
+
         # Time-stepping
         t_val = 0.0
         uh_n.assign(0.0)
@@ -207,6 +205,11 @@ class NS_DLM_Solver:
             # STEP 3: Solve velocity correction
             solve(a3 == L3, uh, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
             uh_n.assign(uh)
+
+            # Save output
+            save_VTK(file_dict, t_val, uh, ph)
+            save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
+            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir)
 
         wall_time = timer_total.stop()
         print("Total simulation wall time : {} sec".format(wall_time), "\n", flush=True)

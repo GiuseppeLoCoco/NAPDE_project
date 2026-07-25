@@ -5,50 +5,39 @@ from firedrake.pyplot import triplot, tripcolor
 import matplotlib.pyplot as plt
 
 
-def save_VTK(file_dict, t, uh, ph, phi, chi):
+def save_VTK(file_dict, t, uh, ph, **kwargs):
     """
-    Salva i risultati (velocità, pressione, phi, chi) in formato VTK.
+    Salva i risultati (velocità, pressione, e campi extra) in formato VTK.
     """
     uh.rename('u', 'u')
     ph.rename('p', 'p')
-    phi.rename('phi', 'phi')
-    chi.rename('chi', 'chi')
     file_dict['u'].write(uh, time=t)
     file_dict['p'].write(ph, time=t)
-    file_dict['phi'].write(phi, time=t)
-    file_dict['chi'].write(chi, time=t)
+    for name, field in kwargs.items():
+        field.rename(name, name)
+        file_dict[name].write(field, time=t)
 
 
-def save_checkpoint(basedir, t_val, uh, ph, phiFun, chiFun, mesh=None, moving=False):
+def save_checkpoint(basedir, t_val, mesh=None, moving=False, **kwargs):
     """
     Salva i risultati e la mesh in file checkpoint (.h5) per il post-processing.
+    I campi da salvare vengono passati come keyword arguments (es. uh=velocity_function).
     """
-    # Creazione delle sottocartelle se non esistono
-    basedir_vel = os.path.join(basedir, 'velocity')
-    basedir_pres = os.path.join(basedir, 'pressure')
-    basedir_phi = os.path.join(basedir, 'phi')
-    basedir_chi = os.path.join(basedir, 'chi')
-    basedir_mesh = os.path.join(basedir, 'mesh')
-
-    subdirs = [basedir_vel, basedir_pres, basedir_phi, basedir_chi, basedir_mesh]
-    for folder in subdirs:
-        os.makedirs(folder, exist_ok=True)
-
-    # Salvataggio delle funzioni
-    with CheckpointFile(os.path.join(basedir_vel, f'velocity_t={t_val:.2f}.h5'), 'w') as chk:
-        chk.save_function(uh, name='velocity')
-
-    with CheckpointFile(os.path.join(basedir_pres, f'pressure_t={t_val:.2f}.h5'), 'w') as chk:
-        chk.save_function(ph, name='pressure')
-
-    with CheckpointFile(os.path.join(basedir_phi, f'phi_t={t_val:.2f}.h5'), 'w') as chk:
-        chk.save_function(phiFun, name='phi')
-
-    with CheckpointFile(os.path.join(basedir_chi, f'chi_t={t_val:.2f}.h5'), 'w') as chk:
-        chk.save_function(chiFun, name='chi')
+    # Salvataggio delle funzioni passate come kwargs
+    for name, function in kwargs.items():
+        # Crea la sottocartella per il campo specifico
+        field_dir = os.path.join(basedir, name)
+        os.makedirs(field_dir, exist_ok=True)
+        
+        # Salva la funzione
+        checkpoint_path = os.path.join(field_dir, f'{name}_t={t_val:.2f}.h5')
+        with CheckpointFile(checkpoint_path, 'w') as chk:
+            chk.save_function(function, name=name)
 
     # Salvataggio della mesh
     if mesh:
+        basedir_mesh = os.path.join(basedir, 'mesh')
+        os.makedirs(basedir_mesh, exist_ok=True)
         mesh_filename = f'mesh_t={t_val:.2f}.h5' if moving else 'mesh.h5'
         with CheckpointFile(os.path.join(basedir_mesh, mesh_filename), 'w') as chk:
             chk.save_mesh(mesh)
@@ -80,7 +69,9 @@ def plot_results(mesh, uh, ph, t_val, basedir):
     fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
 
     # Aggiunta quiver plot per la direzione della velocità
-    coarse_mesh = RectangleMesh(24, 8, mesh.geometric_dimension(), 1)
+    x_coords = mesh.coordinates.dat.data_ro[:, 0]
+    y_coords = mesh.coordinates.dat.data_ro[:, 1]
+    coarse_mesh = RectangleMesh(24, 8, max(x_coords), max(y_coords))
     V_coarse = VectorFunctionSpace(coarse_mesh, "CG", 1)
     uh_coarse = Function(V_coarse).interpolate(uh, allow_missing_dofs=True)
     x_coarse = coarse_mesh.coordinates.dat.data_ro[:, 0]
@@ -100,10 +91,11 @@ def plot_results(mesh, uh, ph, t_val, basedir):
     plt.close(fig)
 
 
-def create_output_folders(solver_name, params):
+def create_output_folders(solver_name, params, extra_fields=None):
     """
     Crea la directory di output e restituisce il percorso base e il dizionario per i file VTK.
     """
+    extra_fields = extra_fields or []
     path_parts = ['cyl', solver_name]
 
     if params.get('moving'):
@@ -130,8 +122,9 @@ def create_output_folders(solver_name, params):
     # Creazione file VTK
     file_dict = {
         'u': VTKFile(os.path.join(basedir, 'velocity.pvd')),
-        'p': VTKFile(os.path.join(basedir, 'pressure.pvd')),
-        'phi': VTKFile(os.path.join(basedir, 'phi.pvd')),
-        'chi': VTKFile(os.path.join(basedir, 'chi.pvd'))
+        'p': VTKFile(os.path.join(basedir, 'pressure.pvd'))
     }
+    for field in extra_fields:
+        file_dict[field] = VTKFile(os.path.join(basedir, f'{field}.pvd'))
+
     return basedir, file_dict

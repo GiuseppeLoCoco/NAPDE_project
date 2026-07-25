@@ -6,30 +6,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'U
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
 
 from firedrake import *
-from firedrake import VTKFile
-from firedrake import CheckpointFile
-import numpy as np
 import argparse
-from domain_settings import *
-from matplotlib import pyplot as plt
 from math import cos, pi as PI
-
-from obstacles import circleObstacle, lineObstacle, rotatingLineObstacle
-import matplotlib.pyplot as plt
-from firedrake import FunctionSpace, Function, sqrt, inner
-from firedrake.pyplot import triplot, tripcolor, quiver
-
-
-def saveVTK(file_dict, t, uh, ph, phi, delta):
-  uh.rename('u','u')
-  ph.rename('p','p')
-  phi.rename('phi','phi')
-  delta.rename('delta','delta')
-  file_dict['u'].write(uh, time=t)
-  file_dict['p'].write(ph, time=t)
-  file_dict['phi'].write(phi, time=t)
-  file_dict['delta'].write(delta, time=t)
-
+from obstacles import circleObstacle
+from post_processing import save_VTK, create_output_folders, plot_results, save_checkpoint
 
 class RIIS_solver:
     def __init__(self, moving=True):
@@ -84,8 +64,9 @@ class RIIS_solver:
 
         # Define boundary conditions
         bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
-        bcs = [bcu_inflow, bcu_walls]
+        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
+        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
+        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top]
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -114,36 +95,14 @@ class RIIS_solver:
               + inner(f,v)*dx \
               + Constant(R/eps) * inner(us_expr,v) * delta_expr * dx
 
-        dir1 = 'RIIS/'
-
-        if self.moving:
-            dir2 = 'moving/'
-        else:
-            dir2 = 'steady/'
-
-        basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
-
-        if not os.path.exists(basedir):
-            os.makedirs(basedir)
-
-        basedir_vel = basedir + 'velocity/'
-        basedir_pres = basedir + 'pressure/'
-        basedir_delta = basedir + 'delta/'
-        basedir_phi = basedir + 'phi/'
-        basedir_mesh = basedir + 'mesh/'
-
-        subdirs = [basedir_vel, basedir_pres, basedir_delta, basedir_phi, basedir_mesh]
-
-        for folder in subdirs:
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-
-        # Create VTK files for visualization output
-        xdmffile_u = VTKFile(basedir+'velocity.pvd')
-        xdmffile_p = VTKFile(basedir+'pressure.pvd')
-        xdmffile_phi = VTKFile(basedir+'phi.pvd')
-        xdmffile_delta = VTKFile(basedir+'delta.pvd')
-        file_dict = {'u': xdmffile_u, 'p': xdmffile_p, 'phi': xdmffile_phi, 'delta': xdmffile_delta}
+        params = {
+            'moving': self.moving,
+            'unsteady': True, # RIIS is always unsteady in this setup
+            'symmetric': False, # Not applicable but needed for path
+            'n': n,
+            'R': R
+        }
+        basedir, file_dict = create_output_folders('RIIS', params, extra_fields=['phi', 'delta'])
 
         # Time-stepping
         t_val = 0.0
@@ -155,10 +114,7 @@ class RIIS_solver:
         phiFun.interpolate(phi_expr)
         deltaFun.interpolate(delta_expr)
 
-        saveVTK(file_dict, t_val, uh, ph, phiFun, deltaFun)
-
-        with CheckpointFile(basedir_mesh + 'mesh.h5', 'w') as chk:
-            chk.save_mesh(mesh)
+        save_VTK(file_dict, t_val, uh, ph, phi=phiFun, delta=deltaFun)
 
         for step in range(num_steps):
 
@@ -180,25 +136,13 @@ class RIIS_solver:
             # Save solution to file (VTK/PVD)
             phiFun.interpolate(phi_expr)
             deltaFun.interpolate(delta_expr)
-            saveVTK(file_dict, t_val, uh, ph, phiFun, deltaFun)
+            save_VTK(file_dict, t_val, uh, ph, phi=phiFun, delta=deltaFun)
 
             # Update previous solution
             uh_n.assign(uh)
 
-            # Save the results in a checkpoint file for post-processing
-            with CheckpointFile(basedir_vel + 'velocity_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(uh, name='velocity')
-
-            with CheckpointFile(basedir_pres + 'pressure_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(ph, name='pressure')
-
-            with CheckpointFile(basedir_phi + 'phi_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(phiFun, name='phi')
-
-            with CheckpointFile(basedir_delta + 'delta_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_function(deltaFun, name='delta')
-
-            self.plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
+            save_checkpoint(basedir, t_val, mesh=None, moving=self.moving, velocity=uh, pressure=ph, phi=phiFun, delta=deltaFun)
+            plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
 
             # Print max velocity
             print('\tu_max:', uh.dat.data.max())
@@ -206,80 +150,6 @@ class RIIS_solver:
         wall_time = time() - t_start
 
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
-
-
-    def plot_results(self, mesh, uh, ph, t_val, basedir):
-
-        # Create a figure with 3 subplots
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-        time = f" a t = {t_val:.2f}" if t_val is not None else ""
-
-        # ==========================================
-        # MESH PLOT
-        # ==========================================
-
-        axes[0].set_title(f"Mesh{time}")
-        triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.5})
-        axes[0].set_aspect('equal')
-
-
-        # ==========================================
-        # PRESSURE PLOT
-        # ==========================================
-
-        axes[1].set_title(f"Pressure (p){time}")
-        # tripcolor mappa i valori scalari in colori
-        plot_p = tripcolor(ph, axes=axes[1], cmap='coolwarm')
-        fig.colorbar(plot_p, ax=axes[1], orientation='vertical', fraction=0.046, pad=0.04)
-        axes[1].set_aspect('equal')
-
-
-        # ==========================================
-        # VELOCITY PLOT
-        # ==========================================
-
-        axes[2].set_title(f"Velocity (u){time}")
-        V_scalar = FunctionSpace(mesh, "CG", 1)
-        u_mag = Function(V_scalar)
-        u_mag.interpolate(sqrt(inner(uh, uh)))
-
-        plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
-        fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
-        
-        """
-        V_cg1_vec = VectorFunctionSpace(mesh, "CG", 1)
-        uh_cg1 = Function(V_cg1_vec).interpolate(uh)
-        
-        x_coords = mesh.coordinates.dat.data_ro[:, 0]
-        y_coords = mesh.coordinates.dat.data_ro[:, 1]
-
-        U_vel = uh_cg1.dat.data_ro[:, 0]
-        V_vel = uh_cg1.dat.data_ro[:, 1]
-        """
-
-        coarse_mesh = RectangleMesh(24, 8, 3, 1) 
-        V_coarse = VectorFunctionSpace(coarse_mesh, "CG", 1)
-
-        uh_coarse = Function(V_coarse).interpolate(uh, allow_missing_dofs=True)
-
-        x_coarse = coarse_mesh.coordinates.dat.data_ro[:, 0]
-        y_coarse = coarse_mesh.coordinates.dat.data_ro[:, 1]
-        U_coarse = uh_coarse.dat.data_ro[:, 0]
-        V_coarse = uh_coarse.dat.data_ro[:, 1]
-
-        axes[2].quiver(x_coarse, y_coarse, U_coarse, V_coarse, 
-                       color='black', scale=40, width=0.001, headwidth=2, pivot='mid')
-
-        axes[2].set_aspect('equal')
-
-        plt.tight_layout()
-
-        plot_dir = basedir + 'plots/'
-        if not os.path.exists(plot_dir):
-            os.makedirs(plot_dir)
-        plt.savefig(plot_dir + f'plot_t={t_val:.2f}.png', dpi=200)
-        plt.close(fig)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes RIIS solver script')
