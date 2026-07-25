@@ -2,6 +2,7 @@ import sys
 import os
 from time import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
 
 from firedrake import *
@@ -31,8 +32,7 @@ def saveVTK(file_dict, t, uh, ph, phi, delta):
 
 
 class RIIS_solver:
-    def __init__(self, conforming=False, moving=True):
-        self.conforming = conforming
+    def __init__(self, moving=True):
         self.moving = moving
 
     def RIIS_solve(self, args=None):
@@ -51,16 +51,9 @@ class RIIS_solver:
         r_obs = 0.1
         eps = 8.0 / n
 
-        if self.conforming:
-            # Test using conforming mesh only with cylinder
-            mesh = conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n)
-            self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
-        else:
-            mesh = RectangleMesh(n, n // 3, Lx, Ly)
-            # Define the obstacle (Using rotatingLine as in the original RIIS code)
-            # obstacle = rotatingLineObstacle(x_obs, 0.0, x_obs, y_obs, eps)
-            self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
-
+        mesh = RectangleMesh(n, n // 3, Lx, Ly)
+        # Define the obstacle
+        self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
         
         # Data
         T_end = 10.0            # final time
@@ -70,10 +63,7 @@ class RIIS_solver:
         rho = 1            # density
 
         # RIIS Penalty Parameters
-        if self.conforming:
-            R = 0.0
-        else:
-            R = 1000.0
+        R = 1000.0
 
         f = Constant((0, 0))
         t = Constant(0.0)
@@ -111,10 +101,7 @@ class RIIS_solver:
         delta_expr = self.obstacle.delta(mesh, t)
         us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
 
-        if self.conforming and self.moving:
-            w = us_expr
-        else:
-            w = Constant((0.0, 0.0))
+        w = Constant((0.0, 0.0))
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
@@ -127,20 +114,14 @@ class RIIS_solver:
               + inner(f,v)*dx \
               + Constant(R/eps) * inner(us_expr,v) * delta_expr * dx
 
-        if self.conforming:
-            dir1 = 'conforming/'
-        else:
-            dir1 = 'RIIS/'
+        dir1 = 'RIIS/'
 
         if self.moving:
             dir2 = 'moving/'
         else:
             dir2 = 'steady/'
 
-        if self.conforming:
-            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'/'
-        else:
-            basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
+        basedir = 'cyl/'+dir1+dir2+'n'+str(n)+'_R'+str(R)+'/'
 
         if not os.path.exists(basedir):
             os.makedirs(basedir)
@@ -176,12 +157,8 @@ class RIIS_solver:
 
         saveVTK(file_dict, t_val, uh, ph, phiFun, deltaFun)
 
-        if self.conforming and self.moving:
-            with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                chk.save_mesh(mesh)
-        else:
-            with CheckpointFile(basedir_mesh + 'mesh.h5', 'w') as chk:
-                chk.save_mesh(mesh)
+        with CheckpointFile(basedir_mesh + 'mesh.h5', 'w') as chk:
+            chk.save_mesh(mesh)
 
         for step in range(num_steps):
 
@@ -198,9 +175,6 @@ class RIIS_solver:
             xc = self.obstacle.x_obs + displ_x
             yc = self.obstacle.y_obs
 
-            if self.conforming and self.moving:
-                pass
-
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
             # Save solution to file (VTK/PVD)
@@ -212,10 +186,6 @@ class RIIS_solver:
             uh_n.assign(uh)
 
             # Save the results in a checkpoint file for post-processing
-            if self.conforming and self.moving:
-                with CheckpointFile(basedir_mesh + 'mesh_t={:.2f}.h5'.format(t_val), 'w') as chk:
-                    chk.save_mesh(mesh)
-                
             with CheckpointFile(basedir_vel + 'velocity_t={:.2f}.h5'.format(t_val), 'w') as chk:
                 chk.save_function(uh, name='velocity')
 
@@ -316,5 +286,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Istanziamo la classe e chiamiamo il solver
-    solver = RIIS_solver(conforming=False, moving=True)
+    solver = RIIS_solver(moving=True)
     solver.RIIS_solve(args)

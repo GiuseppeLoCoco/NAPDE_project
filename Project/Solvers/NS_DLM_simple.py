@@ -1,7 +1,6 @@
 from firedrake import *
 from domain_settings import *
 from user_inputs import *
-from interpolation import *
 from time import time, perf_counter
 import numpy as np
 import math, os, operator, copy, sys, io, json, matplotlib
