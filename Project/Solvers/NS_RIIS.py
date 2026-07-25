@@ -8,6 +8,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 from firedrake import *
 import argparse
 from math import cos, pi as PI
+
+from user_inputs import *
 from domain_settings import create_brinkman_riis_bcs, time_varying_bc
 from obstacles import circleObstacle
 from post_processing import save_VTK, create_output_folders, plot_results, save_checkpoint
