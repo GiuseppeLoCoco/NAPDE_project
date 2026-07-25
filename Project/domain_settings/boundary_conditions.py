@@ -1,10 +1,12 @@
-from firedrake import DirichletBC, Constant, SpatialCoordinate, sin, pi, as_vector
+from firedrake import DirichletBC, Constant, SpatialCoordinate, sin, pi, as_vector, exp
 
 t_param = Constant(0.0)
 
 def get_inflow_profile(mesh):
     X = SpatialCoordinate(mesh)
-    return 6.0 * X[1] * (4.1 - X[1]) / (4.1 * 4.1) * sin(2.0 * pi * t_param / 10.0)
+    y = X[1]
+    # Profilo di inflow parabolico con fase di "start-up" per un canale di altezza 1.0
+    return (1.0 - exp(-t_param)) * 4.0 * y * (1.0 - y)
 
 def time_varying_bc(tt):
     t_param.assign(tt)

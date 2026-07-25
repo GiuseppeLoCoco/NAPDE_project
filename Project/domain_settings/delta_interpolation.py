@@ -39,5 +39,15 @@ def interpolate_nonmatching_mesh_delta(fsi_interpolation, source_func, mesh_flag
     res.interpolate(source_func, allow_missing_dofs=True)
     return res
 
+def interpolate_nonmatching_mesh(source_func, target_space):
+    """
+    Interpolates a Firedrake Function `source_func` onto a `target_space`.
+    This is a general-purpose non-matching mesh interpolation.
+    """
+    res = Function(target_space)
+    res.interpolate(source_func, allow_missing_dofs=True)
+    return res
+
+
 # Alias for compatibility with typos in caller scripts
 interpolate_nonmetching_mesh_delta = interpolate_nonmatching_mesh_delta

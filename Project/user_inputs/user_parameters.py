@@ -4,12 +4,12 @@ from ufl import tensors
 restart = False									
 
 # Geometry and mesh parameters
-Lx = 2.2
-Ly = 0.41
-n = 30
-x_obs = 0.2
-y_obs = 0.2
-r_obs = 0.05
+Lx = 3
+Ly = 1
+n = 100
+x_obs = 0.5
+y_obs = 0.5
+r_obs = 0.1
 
 problem_physics = dict(
     solve_temperature=False,				

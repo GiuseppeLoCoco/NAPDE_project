@@ -97,7 +97,7 @@ class Brinkman_solver:
 
         R = 1000.0
 
-        self.obstacle = circleObstacle(y_obs, y_obs, r_obs)       
+        self.obstacle = circleObstacle(x_obs, y_obs, r_obs)       
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
