@@ -50,9 +50,15 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     time_str = f" a t = {t_val:.2f}" if t_val is not None else ""
 
+    x_coords = mesh.coordinates.dat.data_ro[:, 0]
+    y_coords = mesh.coordinates.dat.data_ro[:, 1]
+    xmin, xmax = x_coords.min(), x_coords.max()
+    ymin, ymax = y_coords.min(), y_coords.max()
+
     # Plot della Mesh Fluida
     axes[0].set_title(f"Mesh{time_str}")
-    triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.3})
+    triplot(mesh, axes=axes[0], interior_kw={"color": "lightgray", "linewidth": 0.05})
+    # triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.1, "alpha": 0.2})
     
     # Plot della Pressione
     axes[1].set_title(f"Pressure (p){time_str}")
@@ -80,12 +86,15 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
                    color='black', scale=40, width=0.001, headwidth=2, pivot='mid')
 
     # Sovrapposizione del cilindro solido (se presente)
+
     if solid_mesh is not None:
         for ax in axes:
             triplot(solid_mesh, axes=ax, interior_kw={"color": "red", "linewidth": 0.6})
 
     for ax in axes:
-        ax.set_aspect('equal')
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_aspect('equal', adjustable='box')
 
     plt.tight_layout()
 

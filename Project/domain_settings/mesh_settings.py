@@ -46,7 +46,7 @@ def conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n):
 
 
 class create_solid_mesh:
-    def __init__(self,x_obs, y_obs, r_obs):
+    def __init__(self, x_obs, y_obs, r_obs):
         self.x_obs = x_obs
         self.y_obs = y_obs
         self.r_obs = r_obs
@@ -70,7 +70,7 @@ class create_solid_mesh:
 		
 
 class create_fluid_mesh:
-    def __init__(self,Lx,Ly,n):
+    def __init__(self, Lx, Ly, n):
         self.Lx = Lx
         self.Ly = Ly
         nnn = n
