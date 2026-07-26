@@ -11,7 +11,7 @@ from math import cos, pi as PI
 
 from user_inputs import *
 from domain_settings import create_brinkman_riis_bcs, time_varying_bc
-from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingObstacle
+from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Brinkman_solver:
@@ -88,12 +88,13 @@ class Brinkman_solver:
 
         if self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, r_obs)
+            self.moving = False
         elif self.type_obstacle == "circle":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
         elif self.type_obstacle == "line":
             self.obstacle = lineObstacle(xA, xB, yA, yB)
         elif self.type_obstacle == "rotating":
-            self.obstacle = rotatingObstacle(xA, xB, yA, yB)
+            self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
@@ -140,10 +141,12 @@ class Brinkman_solver:
         # =========================================
         params = {
             'moving': self.moving,
+            'obstacle': self.type_obstacle,
             'unsteady': self.unsteady,
             'symmetric': self.symmetric,
             'n': n,
-            'R': R
+            'R': R,
+            'Re': Re,
         }
         basedir, file_dict = create_output_folders('brinkman', params, extra_fields=['phi', 'chi'])
 
