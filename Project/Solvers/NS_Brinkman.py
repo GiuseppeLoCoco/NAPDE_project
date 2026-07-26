@@ -11,7 +11,7 @@ from math import cos, pi as PI
 
 from user_inputs import *
 from domain_settings import create_brinkman_riis_bcs, time_varying_bc
-from obstacles import circleObstacle
+from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Brinkman_solver:
@@ -23,6 +23,7 @@ class Brinkman_solver:
         self.unsteady = False
         self.instationary = True
         self.mean = True
+        self.obstacle = "square"
 
     def Brinkman_solve(self, args=None):
 
@@ -85,7 +86,14 @@ class Brinkman_solver:
 
         R = 1000.0
 
-        self.obstacle = circleObstacle(x_obs, y_obs, r_obs)       
+        if self.obstacle == "square":
+            self.obstacle = squareObstacle(x_obs, y_obs, r_obs)
+        elif self.obstacle == "circle":
+            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+        elif self.obstacle == "line":
+            self.obstacle = lineObstacle(xA, xB, yA, yB)
+        elif self.obstacle == "rotating":
+            self.obstacle = rotatingObstacle(xA, xB, yA, yB)
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)

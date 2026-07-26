@@ -6,6 +6,10 @@ restart = False
 # Geometry and mesh parameters
 Lx = 3
 Ly = 1
+xA = 0.5
+xB = 2.5
+yA = 0
+yB = 0.5
 n = 100
 x_obs = 0.5
 y_obs = 0.5*Ly
