@@ -23,7 +23,7 @@ class Brinkman_solver:
         self.unsteady = False
         self.instationary = True
         self.mean = True
-        self.obstacle = "square"
+        self.type_obstacle = "square"
 
     def Brinkman_solve(self, args=None):
 
@@ -86,13 +86,13 @@ class Brinkman_solver:
 
         R = 1000.0
 
-        if self.obstacle == "square":
+        if self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, r_obs)
-        elif self.obstacle == "circle":
+        elif self.type_obstacle == "circle":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-        elif self.obstacle == "line":
+        elif self.type_obstacle == "line":
             self.obstacle = lineObstacle(xA, xB, yA, yB)
-        elif self.obstacle == "rotating":
+        elif self.type_obstacle == "rotating":
             self.obstacle = rotatingObstacle(xA, xB, yA, yB)
 
         # Define function spaces
