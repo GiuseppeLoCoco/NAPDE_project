@@ -3,17 +3,31 @@ from ufl import tensors
 
 restart = False									
 
-# Geometry and mesh parameters
+# ---- Geometry and mesh parameters ----
+
+# Domain dimensions (channel)
 Lx = 3
 Ly = 1
+
+# Line Obstacle parameters
 xA = 0.5
 xB = 2.5
 yA = 0
 yB = 0.5
+
+# Discretization parameter: number of elements
 n = 100
+
+# Cylinder and Square Obstacle parameters
 x_obs = 0.5
 y_obs = 0.5*Ly
 r_obs = 0.1
+side_length = 0.2
+
+# -------------------------
+
+
+# ---- Physics and numerical parameters ----
 
 problem_physics = dict(
     solve_temperature=False,				
@@ -25,7 +39,6 @@ problem_physics = dict(
 )
 	
 def f_dir(dim):									
-    # Vettore unitario UFL
     vec = -1 * tensors.unit_vector(1, dim) 
     return vec
 

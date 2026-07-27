@@ -123,7 +123,7 @@ class NS_DLM_Solver:
         if self.type_obstacle == "cylinder":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
         elif self.type_obstacle == "square":
-            self.obstacle = squareObstacle(x_obs, y_obs, side_length=2*r_obs)
+            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
             self.moving = False  # Fixed square obstacle
         elif self.type_obstacle == "line":
             self.obstacle = lineObstacle(xA, xA, yA, yA)
