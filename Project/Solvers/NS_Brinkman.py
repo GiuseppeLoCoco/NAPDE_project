@@ -89,7 +89,7 @@ class Brinkman_solver:
         if self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, r_obs)
             self.moving = False
-        elif self.type_obstacle == "circle":
+        elif self.type_obstacle == "cylinder":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
         elif self.type_obstacle == "line":
             self.obstacle = lineObstacle(xA, xB, yA, yB)

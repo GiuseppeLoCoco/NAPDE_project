@@ -110,12 +110,14 @@ def create_output_folders(solver_name, params, extra_fields=None):
     Crea la directory di output e restituisce il percorso base e il dizionario per i file VTK.
     """
     extra_fields = extra_fields or []
-    path_parts = ['..', 'Plots', 'cyl', solver_name]
+    path_parts = ['..', 'Plots', solver_name]
 
     if params.get('moving'):
         path_parts.append('moving')
     else:
         path_parts.append('fixed')
+
+    path_parts.append(f"{params.get('type_obstacle')}")
 
     if params.get('unsteady'):
         path_parts.append('unsteady')
@@ -129,6 +131,9 @@ def create_output_folders(solver_name, params, extra_fields=None):
     param_string = f"n{params.get('n', 'N')}"
     if 'R' in params:
         param_string += f"_R{params.get('R')}"
+
+    if 'Re' in params:
+        param_string += f"_Re{params.get('Re')}"
 
     basedir = os.path.join(*path_parts, param_string)
     os.makedirs(basedir, exist_ok=True)
