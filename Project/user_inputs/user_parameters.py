@@ -19,6 +19,8 @@ line_thickness = 0.02
 # Discretization parameter: number of elements
 n = 100
 
+
+
 # Cylinder and Square Obstacle parameters
 x_obs = 0.5
 y_obs = 0.5*Ly

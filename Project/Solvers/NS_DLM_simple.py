@@ -12,7 +12,7 @@ from user_inputs import *
 import math
 import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
-from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
+from domain_settings.obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 
 class Timer:
     def __init__(self):

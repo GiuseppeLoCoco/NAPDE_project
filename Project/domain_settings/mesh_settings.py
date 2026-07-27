@@ -188,11 +188,13 @@ def create_solid_mesh(obstacle_obj):
     if isinstance(obstacle_obj, circleObstacle):
         x_obs, y_obs, r_obs = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.r
         gmsh.model.occ.addDisk(x_obs, y_obs, 0, r_obs, r_obs)
+        gmsh.model.occ.synchronize() # Synchronize after creating geometry
         res = r_obs / 10.0
     elif isinstance(obstacle_obj, squareObstacle):
         x_obs, y_obs, side = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.side_length
         half_side = side / 2.0
         gmsh.model.occ.addRectangle(x_obs - half_side, y_obs - half_side, 0, side, side)
+        gmsh.model.occ.synchronize() # Synchronize after creating geometry
         res = side / 10.0
     elif isinstance(obstacle_obj, (lineObstacle, rotatingLineObstacle)):
         # For a line, we create a thin rectangle. This requires the get_gmsh_rectangle_params method.
@@ -201,6 +203,7 @@ def create_solid_mesh(obstacle_obj):
             unrotated_rect = gmsh.model.occ.addRectangle(xmin, ymin, 0, dx, dy)
             if abs(angle) > 1e-9:
                 gmsh.model.occ.rotate([(2, unrotated_rect)], rot_cx, rot_cy, 0, 0, 0, 1, angle)
+            gmsh.model.occ.synchronize() # Synchronize after creating geometry
             res = obstacle_obj.thickness / 2.0
         except AttributeError:
             gmsh.finalize()
@@ -209,18 +212,21 @@ def create_solid_mesh(obstacle_obj):
         gmsh.finalize()
         raise TypeError(f"Obstacle type {type(obstacle_obj)} not supported for solid mesh creation.")
 
-    gmsh.model.occ.synchronize()
     gmsh.option.setNumber("Mesh.CharacteristicLengthMin", res)
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", res)
     gmsh.model.mesh.generate(2)
     
-    gmsh.write("temp_solid.msh")
+    # Use a unique temporary file to avoid race conditions
+    tmp_solid_msh = f"temp_solid_{os.getpid()}.msh"
+    gmsh.write(tmp_solid_msh)
     gmsh.finalize()
     
-    mesh = Mesh("temp_solid.msh")
-    if os.path.exists("temp_solid.msh"):
-        os.remove("temp_solid.msh")
-    return mesh
+    try:
+        mesh = Mesh(tmp_solid_msh)
+        return mesh
+    finally:
+        if os.path.exists(tmp_solid_msh):
+            os.remove(tmp_solid_msh)
 		
 
 class create_fluid_mesh:
