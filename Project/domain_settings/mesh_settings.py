@@ -4,7 +4,7 @@ import os, csv, operator
 from os import listdir, path, makedirs
 import gmsh # Keep gmsh import here for the Mesh(model) constructor and other gmsh calls
 
-from .obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle # Import obstacle types
+from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle # Import obstacle types
 
 """
 def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
