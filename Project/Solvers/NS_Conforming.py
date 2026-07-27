@@ -37,7 +37,7 @@ class Conforming_solver:
         elif self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
         elif self.type_obstacle == "line":
-                    self.obstacle = lineObstacle(xA, yA, xB, yB, line_thickness)
+                    self.obstacle = lineObstacle(xA, yA, xB, yB, thickness=line_thickness)
         elif self.type_obstacle == "rotating_line":
             self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, line_thickness)
         else:

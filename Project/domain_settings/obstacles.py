@@ -50,11 +50,12 @@ class circleObstacle:
 # Define segment obstacle
 # ==========================
 class lineObstacle:
-  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
+  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05, thickness=0.01):
     self.A_init = [xA, yA] # Initial coordinates of point A
     self.B_init = [xB, yB]
     self.length = np.linalg.norm(np.array(self.A_init)-np.array(self.B_init))
     self.eps = riis_epsilon
+    self.thickness = thickness
     self.amplitude = 3 * self.length
 
   def displ_x(self, t):
@@ -99,6 +100,23 @@ class lineObstacle:
 
   def get_characteristic_length(self):
         return self.length
+
+  def get_gmsh_rectangle_params(self, t_val):
+    """
+    Returns parameters for Gmsh to create an unrotated thin rectangle
+    and its rotation center and angle. For a non-rotating line, the angle is always 0.
+    (xmin, ymin, dx, dy, rotation_center_x, rotation_center_y, angle)
+    """
+    x_center = (self.A_init[0] + self.B_init[0]) / 2.0
+    y_center = (self.A_init[1] + self.B_init[1]) / 2.0
+    
+    xmin = x_center - self.length / 2.0
+    ymin = y_center - self.thickness / 2.0
+    dx = self.length
+    dy = self.thickness
+    
+    # No rotation for the simple line obstacle
+    return xmin, ymin, dx, dy, x_center, y_center, 0.0
 
 # ------- Segment rotating counterclockwise --------
 class rotatingLineObstacle(lineObstacle):
