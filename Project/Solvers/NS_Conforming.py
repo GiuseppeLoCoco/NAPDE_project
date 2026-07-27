@@ -32,7 +32,7 @@ class Conforming_solver:
         # =========== DATA AND SOLVE ===========
         tol = 1e-10
 
-        if self.type_obstacle == "circle":
+        if self.type_obstacle == "cylinder":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
         elif self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
@@ -161,7 +161,7 @@ class Conforming_solver:
 
                 # Project old solution onto the new mesh
                 uh_n_new = Function(V_new, name="Velocity_old")
-                uh_n_new.interpolate(uh_n) 
+                uh_n_new.interpolate(uh_n, allow_missing_dofs=True)
                 uh_n = uh_n_new
 
                 # Update mesh and spaces for the current step
@@ -201,7 +201,7 @@ class Conforming_solver:
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Stokes Conforming solver script')
+    parser = argparse.ArgumentParser(description='Navier-Stokes Conforming solver script')
     args = parser.parse_args()
     
     solver = Conforming_solver(moving=True)
