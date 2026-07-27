@@ -113,7 +113,7 @@ class Conforming_solver:
             w = Constant((0.0, 0.0))
 
         # Create boundary conditions using the dedicated function (t_param is updated via time_varying_bc)
-        bcs = create_bcs_conforming(W, mesh, w, obstacle=self.obstacle)
+        bcs = create_bcs_conforming(W, mesh, w, obstacle=self.type_obstacle)
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \

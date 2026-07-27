@@ -197,7 +197,7 @@ class NS_DLM_Solver:
 
         # Create boundary conditions dictionary and setup
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
-        bcs = create_boundary_conditions(fluid_mesh, obstacle=self.obstacle, **FS)
+        bcs = create_boundary_conditions(fluid_mesh, obstacle=self.type_obstacle, **FS)
 
         # ---------------------------------
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)

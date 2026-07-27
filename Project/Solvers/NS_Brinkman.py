@@ -126,7 +126,7 @@ class Brinkman_solver:
         W = V * Q
 
         # Define boundary conditions
-        bcs = create_bcs_penalty(W, mesh, obstacle=self.obstacle)
+        bcs = create_bcs_penalty(W, mesh, obstacle=self.type_obstacle)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
