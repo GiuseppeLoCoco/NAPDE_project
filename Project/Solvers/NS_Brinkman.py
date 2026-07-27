@@ -195,13 +195,18 @@ class Brinkman_solver:
             t.assign(t_val)
             time_varying_bc(t_val)
 
-            current_us_x = float(assemble(self.obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
+            dx_val = float(self.obstacle.displ_x(t_val)) if hasattr(self.obstacle, 'displ_x') else 0.0
+            dy_val = float(self.obstacle.displ_y(t_val)) if hasattr(self.obstacle, 'displ_y') else 0.0
 
-            # Current Position of the cylinder
-            amplitude = 12 * r_obs
-            displ_x = amplitude * 0.5 * (1 - cos(0.2 * PI * t))
-            xc = self.obstacle.x_obs + displ_x
-            yc = self.obstacle.y_obs
+            if hasattr(self.obstacle, 'x_obs') and hasattr(self.obstacle, 'y_obs'):
+                xc = self.obstacle.x_obs + dx_val
+                yc = self.obstacle.y_obs + dy_val
+            else:
+                A_t = self.obstacle.A(t_val) if hasattr(self.obstacle, 'A') else [0, 0]
+                xc, yc = A_t[0], A_t[1]
+
+            us_x_expr = self.obstacle.us_x(t)
+            current_us_x = float(assemble(us_x_expr * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
     
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
