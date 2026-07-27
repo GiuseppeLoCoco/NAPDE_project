@@ -126,7 +126,7 @@ class Brinkman_solver:
         W = V * Q
 
         # Define boundary conditions
-        bcs = create_bcs_penalty(W, mesh)
+        bcs = create_bcs_penalty(W, mesh, obstacle=self.obstacle)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -204,6 +204,7 @@ class Brinkman_solver:
             yc = self.obstacle.y_obs
     
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+
             phiFun.interpolate(phi_expr)
             chiFun.interpolate(chi_expr)
             
