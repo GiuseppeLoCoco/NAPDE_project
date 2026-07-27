@@ -121,7 +121,7 @@ def create_output_folders(solver_name, params, extra_fields=None):
     else:
         path_parts.append('fixed')
 
-    path_parts.append(f"{params.get('type_obstacle')}")
+    path_parts.append(f"{params.get('obstacle')}")
 
     if params.get('unsteady'):
         path_parts.append('unsteady')
