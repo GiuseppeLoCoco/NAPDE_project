@@ -164,28 +164,51 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
     return m
 
 
-class create_solid_mesh:
-    def __init__(self, x_obs, y_obs, r_obs):
-        self.x_obs = x_obs
-        self.y_obs = y_obs
-        self.r_obs = r_obs
-        nnn = int(70 * 3 * r_obs / 2.2)
-        
-        # Per geometrie circolari/curve, in Firedrake lo standard è Gmsh API
-        gmsh.initialize()
-        gmsh.model.add("circle")
+def create_solid_mesh(obstacle_obj):
+    """
+    Creates a Firedrake mesh for the solid obstacle.
+    """
+    gmsh.initialize()
+    gmsh.model.add("solid_obstacle")
+    
+    res = 0.01 # Default resolution
+
+    if isinstance(obstacle_obj, circleObstacle):
+        x_obs, y_obs, r_obs = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.r
         gmsh.model.occ.addDisk(x_obs, y_obs, 0, r_obs, r_obs)
-        gmsh.model.occ.synchronize()
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", r_obs/nnn)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", r_obs/nnn)
-        gmsh.model.mesh.generate(2)
-        
-        gmsh.write("temp_circle.msh")
+        res = r_obs / 10.0
+    elif isinstance(obstacle_obj, squareObstacle):
+        x_obs, y_obs, side = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.side_length
+        half_side = side / 2.0
+        gmsh.model.occ.addRectangle(x_obs - half_side, y_obs - half_side, 0, side, side)
+        res = side / 10.0
+    elif isinstance(obstacle_obj, (lineObstacle, rotatingLineObstacle)):
+        # For a line, we create a thin rectangle. This requires the get_gmsh_rectangle_params method.
+        try:
+            xmin, ymin, dx, dy, rot_cx, rot_cy, angle = obstacle_obj.get_gmsh_rectangle_params(0.0)
+            unrotated_rect = gmsh.model.occ.addRectangle(xmin, ymin, 0, dx, dy)
+            if abs(angle) > 1e-9:
+                gmsh.model.occ.rotate([(2, unrotated_rect)], rot_cx, rot_cy, 0, 0, 0, 1, angle)
+            res = obstacle_obj.thickness / 2.0
+        except AttributeError:
+            gmsh.finalize()
+            raise TypeError(f"Obstacle type {type(obstacle_obj)} is missing the 'get_gmsh_rectangle_params' method required for solid mesh creation.")
+    else:
         gmsh.finalize()
-        
-        self.mesh = Mesh("temp_circle.msh")
-        if os.path.exists("temp_circle.msh"):
-            os.remove("temp_circle.msh")
+        raise TypeError(f"Obstacle type {type(obstacle_obj)} not supported for solid mesh creation.")
+
+    gmsh.model.occ.synchronize()
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMin", res)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", res)
+    gmsh.model.mesh.generate(2)
+    
+    gmsh.write("temp_solid.msh")
+    gmsh.finalize()
+    
+    mesh = Mesh("temp_solid.msh")
+    if os.path.exists("temp_solid.msh"):
+        os.remove("temp_solid.msh")
+    return mesh
 		
 
 class create_fluid_mesh:

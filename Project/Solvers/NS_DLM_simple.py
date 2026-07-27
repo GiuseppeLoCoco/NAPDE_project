@@ -31,49 +31,55 @@ class NS_DLM_Solver:
 
     def __init__(self, moving=True, type_obstacle="cylinder"):  
 
-        self.moving = moving
-        self.symmetric = True
+        self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
         self.unsteady = False
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
+
+        # Inizializza l'ostacolo e imposta le proprietà in base al suo tipo
+        if self.type_obstacle == "cylinder":
+            print("\nObstacolo: Cilindro")
+            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+            if x_obs == y_obs:
+                print("Configurazione simmetrica: cilindro centrato nel canale")
+                self.symmetric = True
+            else:
+                print("Configurazione asimmetrica: cilindro spostato più in alto nel canale")
+                self.symmetric = False
+        elif self.type_obstacle == "square":
+            print("\nObstacolo: Quadrato")
+            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
+            self.moving = False  # L'ostacolo quadrato è tipicamente fisso nel contesto DLM
+            if x_obs == y_obs: # Assumendo che il centro del quadrato sia x_obs, y_obs
+                print("Configurazione simmetrica: quadrato centrato nel canale")
+                self.symmetric = True
+            else:
+                print("Configurazione asimmetrica: quadrato spostato più in alto nel canale")
+                self.symmetric = False
+        elif self.type_obstacle == "line":
+            print("\nObstacolo: Linea")
+            # Ordine corretto degli argomenti per lineObstacle
+            self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
+            self.moving = False  # Ostacolo linea fisso
+            self.symmetric = False # Gli ostacoli linea non sono generalmente simmetrici in questo contesto
+        elif self.type_obstacle == "rotating_line":
+            print("\nObstacolo: Linea Rotante")
+            # Ordine corretto degli argomenti per rotatingLineObstacle
+            self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
+            self.symmetric = False # Gli ostacoli linea rotanti non sono generalmente simmetrici
+        else:
+            raise ValueError(f"Tipo di ostacolo non supportato: {self.type_obstacle}")
 
 
     def NS_DLM_Solve(self, args=None):
 
         # Start the timer for the simulation
         timer_total.start()
-
         if args and hasattr(args, "velocity_degree") and args.velocity_degree:
             fem_degree.update({"velocity_degree": args.velocity_degree})
-
         # Create the meshes
         fluid_mesh = create_fluid_mesh(Lx, Ly, n)
-        # solid_mesh = create_solid_mesh(x_obs, y_obs, r_obs) --> used only for cylinder obstacle
-
-        if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
-        
-            if self.type_obstacle == "cylinder":
-                print("\nObstacle: Cylinder")
-            elif self.type_obstacle == "square":
-                print("\nObstacle: Square")
-            
-            if x_obs == y_obs:
-                print("\nSymmetric configuration: cylinder centered in the channel")
-                self.symmetric = True
-            else:
-                print("\nAsymmetric configuration: cylinder moved higher in the channel")
-                self.symmetric = False
-
-        else:
-
-            self.symmetric = False
-            
-            if self.type_obstacle == "line":
-                print("\nObstacle: Line")
-            else:
-                print("\nObstacle: Rotating Line")
-
         # ==================================
         # DATA AND SOLVER
         # ==================================
@@ -120,28 +126,17 @@ class NS_DLM_Solver:
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
 
-        if self.type_obstacle == "cylinder":
-            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-        elif self.type_obstacle == "square":
-            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-            self.moving = False  # Fixed square obstacle
-        elif self.type_obstacle == "line":
-            self.obstacle = lineObstacle(xA, xB, yA, yB, line_thickness)
-            self.moving = False  # Fixed line obstacle
-        elif self.type_obstacle == "rotating_line":
-            self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
-
         # Create the solid mesh based on the obstacle type
-        solid_mesh = create_solid_mesh(self.type_obstacle, self.obstacle)
+        solid_mesh = create_solid_mesh(self.obstacle)
 
         # --------------------------------
         # Initialize Flow Variational Problem
         # --------------------------------
 
         # Define function spaces
-        V = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['velocity_degree'])          
-        Q = FunctionSpace(fluid_mesh.mesh, 'P', fem_degree['pressure_degree'])        
-        Z1 = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['lagrange_degree']) 
+        V = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['velocity_degree'])
+        Q = FunctionSpace(fluid_mesh.mesh, 'P', fem_degree['pressure_degree'])
+        Z1 = VectorFunctionSpace(fluid_mesh.mesh, 'P', fem_degree['lagrange_degree'])
         W = V * Q
 
         u, p = TrialFunctions(W)
@@ -168,23 +163,23 @@ class NS_DLM_Solver:
         # Prescribed kinematics for the solid
         # --------------------------------
 
-        R = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['displacement_degree'])  
-        Z = VectorFunctionSpace(solid_mesh.mesh, 'P', fem_degree['lagrange_degree']) 
+        R = VectorFunctionSpace(solid_mesh, 'P', fem_degree['displacement_degree'])
+        Z = VectorFunctionSpace(solid_mesh, 'P', fem_degree['lagrange_degree'])
         Dp_new = Function(R)
         Dp_old = Function(R)
         Dp_inc = Function(R)
         us_ = Function(R) # solid velocity
-        dx_solid = Measure("dx", domain=solid_mesh.mesh)
-        ds_solid = Measure("ds", domain=solid_mesh.mesh)
+        dx_solid = Measure("dx", domain=solid_mesh)
+        ds_solid = Measure("ds", domain=solid_mesh)
 
         # Compute Amplitude
-        coords = solid_mesh.mesh.coordinates.dat.data_ro
+        coords = solid_mesh.coordinates.dat.data_ro
         bbox = coords.max(axis=0) - coords.min(axis=0)
         diameter = bbox.max()
         amplitude = 6.0 * diameter
 
         # Initialize solid mesh coordinates
-        init_coords = Function(R).interpolate(solid_mesh.mesh.coordinates)
+        init_coords = Function(R).interpolate(solid_mesh.coordinates)
 
 
         # --------------------------------
@@ -287,7 +282,7 @@ class NS_DLM_Solver:
             Dp_inc.assign(Dp_new - Dp_old)
 
             # Move solid mesh coordinates
-            solid_mesh.mesh.coordinates.assign(init_coords + Dp_new)
+            solid_mesh.coordinates.assign(init_coords + Dp_new)
             us_.assign(Dp_inc / Constant(dt))
 
             """
@@ -303,7 +298,7 @@ class NS_DLM_Solver:
                 Dp_new.interpolate(as_vector([dx_expr, dy_expr]))
                 
                 # Update mesh coorinates based on the new displacement
-                solid_mesh.mesh.coordinates.assign(init_coords + Dp_new)
+                solid_mesh.coordinates.assign(init_coords + Dp_new)
                 
                 # Update solid velocity us_
                 us_x_expr = self.obstacle.us_x(t_val)
@@ -363,7 +358,7 @@ class NS_DLM_Solver:
             # ------- Save output & plot (with solid mesh) -------
             save_VTK(file_dict, t_val, uh, ph)
             save_checkpoint(dir_vtk, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
-            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir = dir_plots_with_solid, solid_mesh=solid_mesh.mesh)
+            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir = dir_plots_with_solid, solid_mesh=solid_mesh)
 
             # ------- Plot (without solid mesh) -------
             plot_results(fluid_mesh.mesh, uh, ph, t_val=t_val, basedir=dir_plots_fluid_only)
@@ -373,5 +368,14 @@ class NS_DLM_Solver:
 
 
 if __name__ == "__main__":
-    solver = NS_DLM_Solver()
-    solver.NS_DLM_Solve()
+    import argparse
+    parser = argparse.ArgumentParser(description='Navier-Stokes DLM Solver')
+    parser.add_argument('--obstacle', type=str, default='cylinder',
+                        choices=['cylinder', 'square', 'line', 'rotating_line'],
+                        help='Type of obstacle to use in the simulation.')
+    
+    args = parser.parse_args()
+
+    # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
+    solver = NS_DLM_Solver(type_obstacle=args.obstacle)
+    solver.NS_DLM_Solve(args)
