@@ -126,10 +126,10 @@ class NS_DLM_Solver:
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
             self.moving = False  # Fixed square obstacle
         elif self.type_obstacle == "line":
-            self.obstacle = lineObstacle(xA, xA, yA, yA)
+            self.obstacle = lineObstacle(xA, xB, yA, yB, line_thickness)
             self.moving = False  # Fixed line obstacle
         elif self.type_obstacle == "rotating_line":
-            self.obstacle = rotatingLineObstacle(xA, xA, yA, yA)
+            self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
 
         # Create the solid mesh based on the obstacle type
         solid_mesh = create_solid_mesh(self.type_obstacle, self.obstacle)
@@ -250,7 +250,6 @@ class NS_DLM_Solver:
             'obstacle': self.type_obstacle,
             'unsteady': self.unsteady,
             'symmetric': self.symmetric, 
-            'R': R,
             'n': n,
             'Re': Re,
         }

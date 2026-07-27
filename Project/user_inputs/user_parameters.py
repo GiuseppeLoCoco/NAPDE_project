@@ -14,6 +14,7 @@ xA = 0.5
 xB = 2.5
 yA = 0
 yB = 0.5
+line_thickness = 0.02
 
 # Discretization parameter: number of elements
 n = 100

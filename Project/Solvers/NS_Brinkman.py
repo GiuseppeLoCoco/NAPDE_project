@@ -89,8 +89,12 @@ class Brinkman_solver:
         else:
             u_char = u_max
 
-        Re = rho * (2*r_obs) * u_char / mu 
-        print("\nReynolds number Re = {} computed with u_characteristic = {}".format(Re, u_char))
+        L_char = self.obstacle.get_characteristic_length()
+        
+        # Reynolds number
+        Re = rho * L_char * u_char / mu 
+        print("\nCharacteristic length L_char = {}".format(L_char))
+        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
 
         if Re > 80:
             print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))

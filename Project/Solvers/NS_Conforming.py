@@ -8,14 +8,21 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 from firedrake import *
 import argparse
 from domain_settings import *
+from user_inputs import *
 from math import cos, pi as PI, sin # Keep for local math.cos, math.sin usage
 
-from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle
+from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
-    def __init__(self, moving=True):
+    def __init__(self, moving=True, type_obstacle="cylinder"):
+
         self.moving = moving
+        self.symmetric = True
+        self.unsteady = False
+        self.instationary = True
+        self.mean = True
+        self.type_obstacle = type_obstacle
 
     def conforming_solve(self, args=None):
 
@@ -25,42 +32,65 @@ class Conforming_solver:
         # =========== DATA AND SOLVE ===========
         tol = 1e-10
 
-        # Lx, Ly, x_obs, y_obs, n, r_obs are imported from user_inputs
-        # For demonstration, let's assume a default obstacle type.
-        # In a real scenario, this would come from user_inputs.py
-        obstacle_type = "rotating_line" # "circle", "square", or "rotating_line"
-
-        y_obs = 0.5 * Ly
-        n = 25
-        r_obs = 0.1 # Used for circleObstacle
-        side_length = 0.2 # Used for squareObstacle
-        # For rotatingLineObstacle
-        xA_line = Lx / 2 - 0.1
-        yA_line = Ly / 2
-        xB_line = Lx / 2 + 0.1
-        yB_line = Ly / 2
-        line_thickness = 0.02 # Small thickness for the line obstacle
-
-        if obstacle_type == "circle":
+        if self.type_obstacle == "circle":
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-        elif obstacle_type == "square":
+        elif self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-        elif obstacle_type == "rotating_line":
-            self.obstacle = rotatingLineObstacle(xA_line, yA_line, xB_line, yB_line, thickness=line_thickness)
+        elif self.type_obstacle == "line":
+                    self.obstacle = lineObstacle(xA, yA, xB, yB, line_thickness)
+        elif self.type_obstacle == "rotating_line":
+            self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, line_thickness)
         else:
-            raise ValueError(f"Unsupported obstacle type: {obstacle_type}")
+            raise ValueError(f"Unsupported obstacle type: {self.type_obstacle}")
 
         mesh = conforming_mesh(Lx, Ly, self.obstacle, n)
         
-        # Data
-        T_end = 10.0            # final time
-        num_steps = 20    # number of time steps
-        dt = T_end / num_steps # time step size
-        mu = 0.1         # dynamic viscosity
-        rho = 1            # density
-        f = Constant((0, 0)) # Define f here
+        tol = 1e-10
+        T_end = 10.0             # final time
+        num_steps = 20           # number of time steps
+        dt = T_end / num_steps   # time step size
 
-        # Define function spaces
+        # Dynamic viscosity
+        if self.unsteady:
+            mu = 0.0015
+        else:
+            mu = 0.0070
+
+        # Density   
+        rho = 1.0  
+
+        # Characteristic velocity
+        u_max = 1.0                 # max velocity
+        u_mean = 0.667              # mean velocity
+
+        # Choose between u_max and u_mean for the charateristic velocity
+        # in order to compute the Reynolds number
+        if self.mean:
+            u_char = u_mean
+        else:
+            u_char = u_max
+
+        L_char = self.obstacle.get_characteristic_length()
+
+        # Reynolds number
+        Re = rho * L_char * u_char / mu 
+        print("\nCharacteristic length L_char = {}".format(L_char))
+        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
+
+        if Re > 80:
+            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
+            self.unsteady = True
+        else:
+            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
+            self.unsteady = False
+
+        f = Constant((0.0, 0.0))
+        t = Constant(0.0)
+
+        # --------------------------------
+        # Initialize Flow Variational Problem
+        # --------------------------------
+
         V = VectorFunctionSpace(mesh, "CG", 2)
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
@@ -93,13 +123,16 @@ class Conforming_solver:
         
         L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
 
+        # ------- Setup output folders -------
         params = {
             'moving': self.moving,
-            'unsteady': True, # Conforming is always unsteady in this setup
-            'symmetric': False, # Not applicable but needed for path
-            'n': n
+            'obstacle': self.type_obstacle,
+            'unsteady': self.unsteady,
+            'symmetric': self.symmetric, 
+            'n': n,
+            'Re': Re,
         }
-        basedir, file_dict = create_output_folders('conforming', params)
+        basedir, file_dict = create_output_folders('Conforming', params)
 
         # Time-stepping
         t_val = 0.0
@@ -116,21 +149,22 @@ class Conforming_solver:
             # t.assign(t_val) # t is not used directly anymore, t_param is used via time_varying_bc
             time_varying_bc(t_val) # Aggiorna il t_param globale per le BCs
 
-            if self.moving and isinstance(self.obstacle, rotatingLineObstacle):
-                print("Re-meshing for rotating obstacle...")
-                # 1. Create new mesh for the current time
+            if self.moving:
+                print("Re-meshing for moving obstacle...")
+                # Create new mesh for the current time
                 new_mesh = conforming_mesh(Lx, Ly, self.obstacle, n, t_val=t_val)
 
-                # 2. Define new function spaces
+                # Define new function spaces
                 V_new = VectorFunctionSpace(new_mesh, "CG", 2)
                 Q_new = FunctionSpace(new_mesh, "CG", 1)
                 W_new = V_new * Q_new
 
-                # 3. Project old solution onto the new mesh
-                uh_n_new = project(uh_n, V_new)
+                # Project old solution onto the new mesh
+                uh_n_new = Function(V_new, name="Velocity_old")
+                uh_n_new.interpolate(uh_n) 
                 uh_n = uh_n_new
 
-                # 4. Update mesh and spaces for the current step
+                # Update mesh and spaces for the current step
                 mesh = new_mesh
                 V, Q, W = V_new, Q_new, W_new
                 u, p = TrialFunctions(W)
@@ -138,8 +172,9 @@ class Conforming_solver:
                 sol = Function(W)
                 uh, ph = sol.subfunctions
 
-                # 5. Re-create BCs and variational forms on the new spaces
+                # Re-create BCs and variational forms on the new spaces
                 bcs = create_bcs_conforming(W, mesh, w)
+
                 a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
                       + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
                       + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
@@ -147,23 +182,13 @@ class Conforming_solver:
                       + div(u)*q*dx
                 L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
 
-            else:
-                # For non-rotating obstacles, use ALE for translation
-                if self.moving:
-                    displ_x = self.obstacle.displ_x(t_param)
-                    displ_y = self.obstacle.displ_y(t_param)
-                    
-                    # ALE.move expects a Constant or Expression for displacement
-                    # The displacement is relative to the initial position
-                    ALE.move(mesh, as_vector((displ_x, displ_y)))
-
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-
-            # Save solution to file (VTK/PVD)
-            save_VTK(file_dict, t_val, uh, ph)
 
             # Update previous solution
             uh_n.assign(uh)
+            
+            # Save solution to file (VTK/PVD)
+            save_VTK(file_dict, t_val, uh, ph)
 
             save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph)
             plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
