@@ -38,9 +38,11 @@ class Brinkman_solver:
 
             if self.type_obstacle == "cylinder":
                 print("\nObstacle: Cylinder")
+                self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
             elif self.type_obstacle == "square":
                 print("\nObstacle: Square")
-            
+                self.obstacle = squareObstacle(x_obs, y_obs, side_length)
+
             if x_obs == y_obs:
                 print("\nSymmetric configuration: cylinder centered in the channel")
                 self.symmetric = True
@@ -124,7 +126,7 @@ class Brinkman_solver:
         W = V * Q
 
         # Define boundary conditions
-        bcs = create_brinkman_riis_bcs(W, mesh)
+        bcs = create_bcs_penalty(W, mesh)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
