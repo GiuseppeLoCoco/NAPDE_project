@@ -110,7 +110,11 @@ def create_output_folders(solver_name, params, extra_fields=None):
     Crea la directory di output e restituisce il percorso base e il dizionario per i file VTK.
     """
     extra_fields = extra_fields or []
-    path_parts = ['..', 'Plots', solver_name]
+    
+    # Costruisce un percorso robusto partendo dalla directory del progetto (Project/)
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    base_plot_dir = os.path.join(project_root, 'Plots', solver_name)
+    path_parts = [base_plot_dir]
 
     if params.get('moving'):
         path_parts.append('moving')
@@ -135,7 +139,7 @@ def create_output_folders(solver_name, params, extra_fields=None):
     if 'Re' in params:
         param_string += f"_Re{params.get('Re')}"
 
-    basedir = os.path.join(*path_parts, param_string)
+    basedir = os.path.join(base_plot_dir, *path_parts[1:], param_string)
     os.makedirs(basedir, exist_ok=True)
 
     # Creazione file VTK
