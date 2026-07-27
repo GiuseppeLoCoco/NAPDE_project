@@ -91,9 +91,9 @@ class NS_DLM_Solver:
 
         # Dynamic viscosity
         if self.unsteady:
-            mu = 0.0015
+            mu = 0.0010
         else:
-            mu = 0.0070
+            mu = 0.0035
 
         # Density   
         rho = 1.0  

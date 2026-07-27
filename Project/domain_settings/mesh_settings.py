@@ -4,6 +4,8 @@ import os, csv, operator
 from os import listdir, path, makedirs
 import gmsh # Keep gmsh import here for the Mesh(model) constructor and other gmsh calls
 
+from user_inputs import *
+from domain_settings import *
 from .obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle # Import obstacle types
 
 """
@@ -188,12 +190,12 @@ def create_solid_mesh(obstacle_obj):
     if isinstance(obstacle_obj, circleObstacle):
         x_obs, y_obs, r_obs = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.r
         gmsh.model.occ.addDisk(x_obs, y_obs, 0, r_obs, r_obs)
-        res = r_obs / 10.0
+        res = r_obs / n
     elif isinstance(obstacle_obj, squareObstacle):
         x_obs, y_obs, side = obstacle_obj.x_obs, obstacle_obj.y_obs, obstacle_obj.side_length
         half_side = side / 2.0
         gmsh.model.occ.addRectangle(x_obs - half_side, y_obs - half_side, 0, side, side)
-        res = side / 10.0
+        res = side / n
     elif isinstance(obstacle_obj, (lineObstacle, rotatingLineObstacle)):
         # For a line, we create a thin rectangle. This requires the get_gmsh_rectangle_params method.
         try:
