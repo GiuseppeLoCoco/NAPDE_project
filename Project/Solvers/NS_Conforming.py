@@ -8,9 +8,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 from firedrake import *
 import argparse
 from domain_settings import *
-from math import cos, pi as PI
+from math import cos, pi as PI, sin # Keep for local math.cos, math.sin usage
 
-from obstacles import circleObstacle
+from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
@@ -25,16 +25,32 @@ class Conforming_solver:
         # =========== DATA AND SOLVE ===========
         tol = 1e-10
 
-        # Create mesh
-        Lx, Ly = 3, 1
-        x_obs = 0.5
+        # Lx, Ly, x_obs, y_obs, n, r_obs are imported from user_inputs
+        # For demonstration, let's assume a default obstacle type.
+        # In a real scenario, this would come from user_inputs.py
+        obstacle_type = "rotating_line" # "circle", "square", or "rotating_line"
+
         y_obs = 0.5 * Ly
         n = 25
-        r_obs = 0.1
+        r_obs = 0.1 # Used for circleObstacle
+        side_length = 0.2 # Used for squareObstacle
+        # For rotatingLineObstacle
+        xA_line = Lx / 2 - 0.1
+        yA_line = Ly / 2
+        xB_line = Lx / 2 + 0.1
+        yB_line = Ly / 2
+        line_thickness = 0.02 # Small thickness for the line obstacle
 
-        # Test using conforming mesh only with cylinder
-        mesh = conforming_mesh(Lx, Ly, x_obs, y_obs, r_obs, n)
-        self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
+        if obstacle_type == "circle":
+            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+        elif obstacle_type == "square":
+            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
+        elif obstacle_type == "rotating_line":
+            self.obstacle = rotatingLineObstacle(xA_line, yA_line, xB_line, yB_line, thickness=line_thickness)
+        else:
+            raise ValueError(f"Unsupported obstacle type: {obstacle_type}")
+
+        mesh = conforming_mesh(Lx, Ly, self.obstacle, n)
         
         # Data
         T_end = 10.0            # final time
@@ -42,19 +58,7 @@ class Conforming_solver:
         dt = T_end / num_steps # time step size
         mu = 0.1         # dynamic viscosity
         rho = 1            # density
-
-        f = Constant((0, 0))
-        t = Constant(0.0)
-
-        x, y = SpatialCoordinate(mesh)
-        inflow_profile = as_vector(((1.0-exp(-t)) * 4.0*y*(1.0 - y), 0.0))
-
-        
-        # Define boundaries
-        inflow_id = 1
-        outflow_id = 2
-        walls_ids = (3, 4)
-        obstacle_id = 5
+        f = Constant((0, 0)) # Define f here
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
@@ -71,19 +75,15 @@ class Conforming_solver:
         uh, ph = sol.subfunctions
 
         # Define variational problem
-        us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        us_expr = as_vector((self.obstacle.us_x(t_param), self.obstacle.us_y(t_param)))
 
         if self.moving:
             w = us_expr
         else:
             w = Constant((0.0, 0.0))
 
-        # Define boundary conditions
-        bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
-        bcu_wall_bottom = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]) # ID 3
-        bcu_wall_top = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])    # ID 4
-        bcu_obstacle = DirichletBC(W.sub(0), w, obstacle_id)
-        bcs = [bcu_inflow, bcu_wall_bottom, bcu_wall_top, bcu_obstacle]
+        # Create boundary conditions using the dedicated function (t_param is updated via time_varying_bc)
+        bcs = create_bcs_conforming(W, mesh, w)
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
@@ -91,8 +91,7 @@ class Conforming_solver:
               - div(v)*p*dx \
               + div(u)*q*dx
         
-        L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx \
-              + inner(f,v)*dx
+        L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
 
         params = {
             'moving': self.moving,
@@ -114,16 +113,49 @@ class Conforming_solver:
             # Update current time
             t_val = (step + 1) * dt
             print('t =', t_val)
-            t.assign(t_val)
+            # t.assign(t_val) # t is not used directly anymore, t_param is used via time_varying_bc
+            time_varying_bc(t_val) # Aggiorna il t_param globale per le BCs
 
-            # Current Position of the cylinder
-            amplitude = 12 * r_obs
-            displ_x = amplitude * 0.5 * (1 - cos(0.2 * PI * t))
-            xc = self.obstacle.x_obs + displ_x
-            yc = self.obstacle.y_obs
+            if self.moving and isinstance(self.obstacle, rotatingLineObstacle):
+                print("Re-meshing for rotating obstacle...")
+                # 1. Create new mesh for the current time
+                new_mesh = conforming_mesh(Lx, Ly, self.obstacle, n, t_val=t_val)
 
-            if self.moving:
-                ALE.move(mesh, Constant((xc - self.obstacle.x_obs, 0.0)))
+                # 2. Define new function spaces
+                V_new = VectorFunctionSpace(new_mesh, "CG", 2)
+                Q_new = FunctionSpace(new_mesh, "CG", 1)
+                W_new = V_new * Q_new
+
+                # 3. Project old solution onto the new mesh
+                uh_n_new = project(uh_n, V_new)
+                uh_n = uh_n_new
+
+                # 4. Update mesh and spaces for the current step
+                mesh = new_mesh
+                V, Q, W = V_new, Q_new, W_new
+                u, p = TrialFunctions(W)
+                v, q = TestFunctions(W)
+                sol = Function(W)
+                uh, ph = sol.subfunctions
+
+                # 5. Re-create BCs and variational forms on the new spaces
+                bcs = create_bcs_conforming(W, mesh, w)
+                a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
+                      + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
+                      + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+                      - div(v)*p*dx \
+                      + div(u)*q*dx
+                L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
+
+            else:
+                # For non-rotating obstacles, use ALE for translation
+                if self.moving:
+                    displ_x = self.obstacle.displ_x(t_param)
+                    displ_y = self.obstacle.displ_y(t_param)
+                    
+                    # ALE.move expects a Constant or Expression for displacement
+                    # The displacement is relative to the initial position
+                    ALE.move(mesh, as_vector((displ_x, displ_y)))
 
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 

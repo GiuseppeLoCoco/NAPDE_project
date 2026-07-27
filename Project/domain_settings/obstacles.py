@@ -3,7 +3,7 @@ from ast import Constant
 from firedrake import *
 import numpy as np
 from math import pi as PI
-
+import math # For Python math functions
 # ==========================
 # Define circular obstacle
 # ==========================
@@ -49,7 +49,7 @@ class circleObstacle:
 # ==========================
 class lineObstacle:
   def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
-    self.A_init = [xA, yA]
+    self.A_init = [xA, yA] # Initial coordinates of point A
     self.B_init = [xB, yB]
     self.length = np.linalg.norm(np.array(self.A_init)-np.array(self.B_init))
     self.eps = riis_epsilon
