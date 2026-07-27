@@ -225,6 +225,7 @@ output*/
 restart_variables/
 time_series_solid_current_mesh*/
 text_files/
+Plots/
 
 # Accidental local files
 python3

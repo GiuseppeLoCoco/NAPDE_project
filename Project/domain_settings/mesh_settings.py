@@ -4,7 +4,7 @@ import os, csv, operator
 from os import listdir, path, makedirs
 import gmsh # Keep gmsh import here for the Mesh(model) constructor and other gmsh calls
 
-from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle # Import obstacle types
+from .obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle # Import obstacle types
 
 """
 def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
@@ -94,18 +94,20 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
     dx = float(obstacle_obj.displ_x(t_val)) if hasattr(obstacle_obj, 'displ_x') else 0.0
     dy = float(obstacle_obj.displ_y(t_val)) if hasattr(obstacle_obj, 'displ_y') else 0.0
     
-    xc = obstacle_obj.x_obs + dx
-    yc = obstacle_obj.y_obs + dy
+    xc = obstacle_obj.x_obs + dx if hasattr(obstacle_obj, 'x_obs') else dx
+    yc = obstacle_obj.y_obs + dy if hasattr(obstacle_obj, 'y_obs') else dy
 
-    if isinstance(obstacle_obj, circleObstacle):
+    obs_type_name = type(obstacle_obj).__name__
+
+    if obs_type_name == "circleObstacle" or isinstance(obstacle_obj, circleObstacle):
         obstacle = model.occ.addDisk(xc, yc, 0, obstacle_obj.r, obstacle_obj.r)
 
-    elif isinstance(obstacle_obj, squareObstacle):
+    elif obs_type_name == "squareObstacle" or isinstance(obstacle_obj, squareObstacle):
         xmin = xc - obstacle_obj.half_side
         ymin = yc - obstacle_obj.half_side
         obstacle = model.occ.addRectangle(xmin, ymin, 0, obstacle_obj.side_length, obstacle_obj.side_length)
 
-    elif isinstance(obstacle_obj, rotatingLineObstacle):
+    elif obs_type_name in ["rotatingLineObstacle", "lineObstacle"] or isinstance(obstacle_obj, lineObstacle) or isinstance(obstacle_obj, rotatingLineObstacle):
         xmin, ymin, dx_rec, dy_rec, rot_cx, rot_cy, angle = obstacle_obj.get_gmsh_rectangle_params(t_val)
         unrotated_rect = model.occ.addRectangle(xmin, ymin, 0, dx_rec, dy_rec)
         if abs(angle) > 1e-9:
@@ -151,7 +153,7 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
 
     model.mesh.setSize(model.getEntities(0), res_domain)
     
-    obs_points = model.getAdjacencies(1, obstacle_lines[0])[1] if obstacle_lines else []
+    # obs_points = model.getAdjacencies(1, obstacle_lines[0])[1] if obstacle_lines else []
     for line in obstacle_lines:
         pts = model.getBoundary([(1, line)], combined=False)
         for pt in pts:
@@ -159,8 +161,18 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
 
     model.mesh.generate(2)
 
-    m = Mesh(model)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+
+    tmp_msh_file = f"tmp_mesh_t_{t_val:.4f}.msh"
+    gmsh.write(tmp_msh_file)
     gmsh.finalize()
+
+    m = Mesh(tmp_msh_file)
+
+    import os
+    if os.path.exists(tmp_msh_file):
+        os.remove(tmp_msh_file)
+
     return m
 
 
