@@ -21,7 +21,7 @@ class Conforming_solver:
         self.symmetric = True
         self.unsteady = False
         self.instationary = True
-        self.mean = True
+        # self.mean = True
         self.type_obstacle = type_obstacle
 
     def conforming_solve(self, args=None):
@@ -50,39 +50,31 @@ class Conforming_solver:
         num_steps = 20           # number of time steps
         dt = T_end / num_steps   # time step size
 
-        # Dynamic viscosity
+        # Reynolds number
         if self.unsteady:
-            mu = 0.0015
+            Re = 80
         else:
-            mu = 0.0070
+            Re = 40
 
         # Density   
         rho = 1.0  
 
         # Characteristic velocity
-        u_max = 1.0                 # max velocity
-        u_mean = 0.667              # mean velocity
+        u_char = 1              # mean velocity
 
-        # Choose between u_max and u_mean for the charateristic velocity
-        # in order to compute the Reynolds number
-        if self.mean:
-            u_char = u_mean
-        else:
-            u_char = u_max
-
+        # Charateristic length
         L_char = self.obstacle.get_characteristic_length()
 
-        # Reynolds number
-        Re = rho * L_char * u_char / mu 
+        # Dynamic viscosity
+        mu = rho * L_char * u_char / Re
+
         print("\nCharacteristic length L_char = {}".format(L_char))
         print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
 
-        if Re > 80:
+        if self.unsteady == True:
             print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
-            self.unsteady = True
         else:
             print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
-            self.unsteady = False
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
