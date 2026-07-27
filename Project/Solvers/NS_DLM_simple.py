@@ -131,6 +131,7 @@ class NS_DLM_Solver:
         elif self.type_obstacle == "rotating_line":
             self.obstacle = rotatingLineObstacle(xA, xA, yA, yA)
 
+        # Create the solid mesh based on the obstacle type
         solid_mesh = create_solid_mesh(self.type_obstacle, self.obstacle)
 
         # --------------------------------
@@ -157,6 +158,8 @@ class NS_DLM_Solver:
 
         dx_fluid = Measure("dx", domain=fluid_mesh.mesh)
 
+
+        # Vorticity for the unsteady case
         vort, psi = Function(Q), Function(Q)
         vort.assign(0.0)
         psi.assign(0.0)
