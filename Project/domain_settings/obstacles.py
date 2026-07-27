@@ -43,6 +43,8 @@ class circleObstacle:
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
+  def get_characteristic_length(self):
+        return 2.0 * self.r
 
 # ==========================
 # Define segment obstacle
@@ -94,6 +96,9 @@ class lineObstacle:
     dist = self.distExpr(mesh, t)
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+
+  def get_characteristic_length(self):
+        return self.length
 
 # ------- Segment rotating counterclockwise --------
 class rotatingLineObstacle(lineObstacle):
@@ -196,3 +201,6 @@ class squareObstacle:
       dist = self.distExpr(mesh, t)
       abs_dist = conditional(dist < 0.0, -dist, dist)
       return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
+
+  def get_characteristic_length(self):
+        return self.side_length

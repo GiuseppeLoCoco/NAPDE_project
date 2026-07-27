@@ -12,6 +12,7 @@ from user_inputs import *
 import math
 import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
+from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 
 class Timer:
     def __init__(self):
@@ -28,13 +29,14 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True):  
+    def __init__(self, moving=True, type_obstacle="cylinder"):  
 
         self.moving = moving
         self.symmetric = True
         self.unsteady = False
         self.instationary = True
         self.mean = True
+        self.type_obstacle = type_obstacle
 
 
     def NS_DLM_Solve(self, args=None):
@@ -47,12 +49,30 @@ class NS_DLM_Solver:
 
         # Create the meshes
         fluid_mesh = create_fluid_mesh(Lx, Ly, n)
-        solid_mesh = create_solid_mesh(x_obs, y_obs, r_obs)
+        # solid_mesh = create_solid_mesh(x_obs, y_obs, r_obs) --> used only for cylinder obstacle
 
-        if x_obs == y_obs:
-            print("\nSymmetric configuration: cylinder centered in the channel")
+        if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+        
+            if self.type_obstacle == "cylinder":
+                print("\nObstacle: Cylinder")
+            elif self.type_obstacle == "square":
+                print("\nObstacle: Square")
+            
+            if x_obs == y_obs:
+                print("\nSymmetric configuration: cylinder centered in the channel")
+                self.symmetric = True
+            else:
+                print("\nAsymmetric configuration: cylinder moved higher in the channel")
+                self.symmetric = False
+
         else:
-            print("\nAsymmetric configuration: cylinder moved higher in the channel")
+
+            self.symmetric = False
+            
+            if self.type_obstacle == "line":
+                print("\nObstacle: Line")
+            else:
+                print("\nObstacle: Rotating Line")
 
         # ==================================
         # DATA AND SOLVER
@@ -83,8 +103,12 @@ class NS_DLM_Solver:
         else:
             u_char = u_max
 
-        Re = rho * (2*r_obs) * u_char / mu 
-        print("\nReynolds number Re = {} computed with u_characteristic = {}".format(Re, u_char))
+        L_char = self.obstacle.get_characteristic_length()
+
+        # Reynolds number
+        Re = rho * L_char * u_char / mu 
+        print("\nCharacteristic length L_char = {}".format(L_char))
+        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
 
         if Re > 80:
             print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
@@ -95,6 +119,19 @@ class NS_DLM_Solver:
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
+
+        if self.type_obstacle == "cylinder":
+            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+        elif self.type_obstacle == "square":
+            self.obstacle = squareObstacle(x_obs, y_obs, side_length=2*r_obs)
+            self.moving = False  # Fixed square obstacle
+        elif self.type_obstacle == "line":
+            self.obstacle = lineObstacle(xA, xA, yA, yA)
+            self.moving = False  # Fixed line obstacle
+        elif self.type_obstacle == "rotating_line":
+            self.obstacle = rotatingLineObstacle(xA, xA, yA, yA)
+
+        solid_mesh = create_solid_mesh(self.type_obstacle, self.obstacle)
 
         # --------------------------------
         # Initialize Flow Variational Problem
@@ -207,9 +244,12 @@ class NS_DLM_Solver:
         # ------- Setup output folders -------
         params = {
             'moving': self.moving,
-            'unsteady': True,
-            'symmetric': False, # Placeholder
-            'n': n
+            'obstacle': self.type_obstacle,
+            'unsteady': self.unsteady,
+            'symmetric': self.symmetric, 
+            'R': R,
+            'n': n,
+            'Re': Re,
         }
         basedir, file_dict = create_output_folders('DLM', params)
 
@@ -228,6 +268,11 @@ class NS_DLM_Solver:
 
             time_varying_bc(t_val)
 
+            """
+            !!! Old code for moving and updating the solid mesh coordinates and velocity !!!
+
+            It works only for the cylinder obstacle
+
             # Update solid position and velocity
             x_solid = SpatialCoordinate(solid_mesh.mesh)
             Dp_old.assign(Dp_new)
@@ -242,6 +287,31 @@ class NS_DLM_Solver:
             # Move solid mesh coordinates
             solid_mesh.mesh.coordinates.assign(init_coords + Dp_new)
             us_.assign(Dp_inc / Constant(dt))
+
+            """
+
+            # Update solid position and velocity
+            Dp_old.assign(Dp_new)
+
+            if self.moving:
+                # Update the displacement based on the prescribed kinematics of the obstacle
+                dx_expr = self.obstacle.displ_x(t_val)
+                dy_expr = self.obstacle.displ_y(t_val)
+                
+                Dp_new.interpolate(as_vector([dx_expr, dy_expr]))
+                
+                # Update mesh coorinates based on the new displacement
+                solid_mesh.mesh.coordinates.assign(init_coords + Dp_new)
+                
+                # Update solid velocity us_
+                us_x_expr = self.obstacle.us_x(t_val)
+                us_y_expr = self.obstacle.us_y(t_val)
+                us_.interpolate(as_vector([us_x_expr, us_y_expr]))
+            else:
+                # Fixed obstacle
+                Dp_new.assign(0.0)
+                us_.assign(0.0)
+            
 
             fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
             fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")

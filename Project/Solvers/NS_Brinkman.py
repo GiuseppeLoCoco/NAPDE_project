@@ -16,14 +16,14 @@ from post_processing import save_VTK, save_checkpoint, plot_results, create_outp
 
 class Brinkman_solver:
 
-    def __init__(self, moving=True):
+    def __init__(self, moving=True, type_obstacle="cylinder"):
 
         self.moving = moving
         self.symmetric = True
         self.unsteady = False
         self.instationary = True
         self.mean = True
-        self.type_obstacle = "square"
+        self.type_obstacle = type_obstacle
 
     def Brinkman_solve(self, args=None):
 
@@ -34,10 +34,28 @@ class Brinkman_solver:
         # CREATE MESH
         # ==================================
 
-        if x_obs == y_obs:
-            print("\nSymmetric configuration: cylinder centered in the channel")
+        if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+
+            if self.type_obstacle == "cylinder":
+                print("\nObstacle: Cylinder")
+            elif self.type_obstacle == "square":
+                print("\nObstacle: Square")
+            
+            if x_obs == y_obs:
+                print("\nSymmetric configuration: cylinder centered in the channel")
+                self.symmetric = True
+            else:
+                print("\nAsymmetric configuration: cylinder moved higher in the channel")
+                self.symmetric = False
+
         else:
-            print("\nAsymmetric configuration: cylinder moved higher in the channel")
+
+            self.symmetric = False
+            
+            if self.type_obstacle == "line":
+                print("\nObstacle: Line")
+            else:
+                print("\nObstacle: Rotating Line")
 
         mesh = RectangleMesh(n, int(n * Ly / Lx), Lx, Ly)
 
@@ -148,7 +166,7 @@ class Brinkman_solver:
             'R': R,
             'Re': Re,
         }
-        basedir, file_dict = create_output_folders('brinkman', params, extra_fields=['phi', 'chi'])
+        basedir, file_dict = create_output_folders('Brinkman', params, extra_fields=['phi', 'chi'])
 
         # Time-stepping
         t_val = 0.0
