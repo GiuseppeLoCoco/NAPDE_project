@@ -6,7 +6,7 @@ restart = False
 # ---- Geometry and mesh parameters ----
 
 # Domain dimensions (channel)
-Lx = 3
+Lx = 4
 Ly = 1
 
 # Line Obstacle parameters
