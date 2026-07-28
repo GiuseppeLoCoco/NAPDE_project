@@ -87,6 +87,16 @@ OBSTACLE_HAS_SYMMETRY = {
     "square":   True,
 }
 
+def case_has_symmetry(obstacle: str, Re: int) -> bool:
+    """
+    Whether THIS specific (obstacle, Re) combination actually has a
+    symmetric/asymmetric sub-folder. Currently: both obstacles, but only in
+    the unsteady regime (Re = 80) -- the steady cases (Re = 40) have no
+    symmetry split, for either obstacle.
+    """
+    regime = REYNOLDS_REGIME[Re]
+    return OBSTACLE_HAS_SYMMETRY.get(obstacle, False) and regime == "unsteady"
+
 CONFORMING_OBSTACLE_NAME = {
     "cylinder": "cylinder",
     "square":   "square",
@@ -180,11 +190,11 @@ class PathBuilder:
         motion = OBSTACLE_MOTION[obstacle]
         regime = REYNOLDS_REGIME[Re]
         parts = [self.base_dir, method, motion, obstacle, regime]
-        if OBSTACLE_HAS_SYMMETRY.get(obstacle, False):
+        if case_has_symmetry(obstacle, Re):
             if symmetry is None:
                 raise ValueError(
-                    f"Obstacle '{obstacle}' requires a symmetry value "
-                    f"in {VALID_SYMMETRIES}."
+                    f"Case (obstacle='{obstacle}', Re={Re}) requires a "
+                    f"symmetry value in {VALID_SYMMETRIES}."
                 )
             parts.append(symmetry)
         parts.append(self.folder_name(method, n, Re))
@@ -206,27 +216,16 @@ class PathBuilder:
                             symmetry: Optional[str] = None) -> str:
         motion = OBSTACLE_MOTION[obstacle]
         regime = REYNOLDS_REGIME[Re]
-        parts = [self.base_dir, "Conforming", motion, obstacle, regime]
-        if OBSTACLE_HAS_SYMMETRY.get(obstacle, False):
+        conforming_obstacle_name = CONFORMING_OBSTACLE_NAME[obstacle]
+        parts = [self.base_dir, "Conforming", motion, conforming_obstacle_name, regime]
+        parts.append(f"n{self.cfg.reference_n}_Re{Re}")
+        if case_has_symmetry(obstacle, Re):
             if symmetry is None:
                 raise ValueError(
                     f"Obstacle '{obstacle}' requires a symmetry value "
                     f"in {VALID_SYMMETRIES}."
                 )
             parts.append(symmetry)
-        parts.append(f"n{self.cfg.reference_n}_Re{Re}")
-        return os.path.join(*parts)
-
-    def reference_case_dir(self, obstacle: str, Re: int,
-                            symmetry: Optional[str] = None) -> str:
-        # NOTE: the reference/conforming solution has NO symmetric/
-        # asymmetric sub-folder, even for the cylinder -- `symmetry` is
-        # accepted here only for a uniform call signature with the
-        # penalized-solution path builders, and is intentionally ignored.
-        motion = OBSTACLE_MOTION[obstacle]
-        regime = REYNOLDS_REGIME[Re]
-        conforming_obstacle_name = CONFORMING_OBSTACLE_NAME[obstacle]
-        parts = [self.base_dir, "Conforming", motion, conforming_obstacle_name, regime]
         parts.append(f"n{self.cfg.reference_n}_Re{Re}")
         return os.path.join(*parts)
 
