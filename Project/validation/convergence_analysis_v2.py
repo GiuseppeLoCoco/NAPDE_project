@@ -29,25 +29,26 @@ Directory-naming rules
   for the square (see ``OBSTACLE_MOTION``).
 - ``regime``  is fixed by the Reynolds number: Re = 40 -> "steady",
   Re = 80 -> "unsteady" (see ``REYNOLDS_REGIME``).
-- ``symmetry`` (a "symmetric"/"asymmetric" sub-folder) is currently only
-  present for the cylinder. The square does *not* have this folder level
-  today, but the flag ``OBSTACLE_HAS_SYMMETRY`` controls this per obstacle,
-  so the moment a symmetric/asymmetric split becomes available for the
-  square as well, enabling it only requires flipping that flag to ``True``.
+- ``symmetry`` (a "symmetric"/"asymmetric" sub-folder) is present for BOTH
+  obstacles, but only in the unsteady regime (Re = 80); the steady cases
+  (Re = 40) never have this folder level, for either obstacle. This is
+  controlled by ``OBSTACLE_HAS_SYMMETRY`` + ``case_has_symmetry``.
 - The penalization parameter R only appears in the folder/file name for the
   Brinkman method (kept fixed at ``R_penalty``, default 1000.0); DLM folders
   have no R.
 
 NOTE ON THE REFERENCE ("CONFORMING") SOLUTION
 ----------------------------------------------
-The exact folder convention for the reference/conforming solution was not
-specified by the user for the new directory layout. The code below assumes,
-by analogy with the penalized-solution layout, a tree of the form:
+The reference/conforming solution (n = 200, taken as the "exact" solution)
+lives under its own tree, with NO symmetric/asymmetric sub-folder (even for
+the cylinder), and with the square spelled "squared" at this level only:
 
-    Conforming/{motion}/{obstacle}/{regime}/[{symmetry}/]n{reference_n}_Re{Re}
+    Conforming/fixed/square/steady/n200_Re40
+    Conforming/moving/cylinder/unsteady/n200_Re80
 
-If the real layout differs, only ``PathBuilder.reference_case_dir`` needs to
-be edited; nothing else in the pipeline depends on this assumption.
+This is handled by ``CONFORMING_OBSTACLE_NAME`` and
+``PathBuilder.reference_case_dir``. If any of this changes, only those two
+spots need editing; nothing else in the pipeline depends on it.
 """
 
 import os
@@ -80,12 +81,14 @@ REYNOLDS_REGIME = {
 }
 
 # Whether the directory tree for a given obstacle includes a
-# "symmetric" / "asymmetric" sub-folder. Only the cylinder has it today;
-# flip the square's value to True the day that split also exists for it.
+# "symmetric" / "asymmetric" sub-folder AT ALL (structural capability).
+# Both obstacles have this split (in the unsteady regime only -- see
+# case_has_symmetry below).
 OBSTACLE_HAS_SYMMETRY = {
     "cylinder": True,
     "square":   True,
 }
+
 
 def case_has_symmetry(obstacle: str, Re: int) -> bool:
     """
@@ -97,6 +100,10 @@ def case_has_symmetry(obstacle: str, Re: int) -> bool:
     regime = REYNOLDS_REGIME[Re]
     return OBSTACLE_HAS_SYMMETRY.get(obstacle, False) and regime == "unsteady"
 
+# Obstacle folder name as it appears specifically under the "Conforming/"
+# tree. Confirmed layout:
+#   Conforming/fixed/square/steady/n200_Re40
+#   Conforming/moving/cylinder/unsteady/n200_Re80
 CONFORMING_OBSTACLE_NAME = {
     "cylinder": "cylinder",
     "square":   "square",
@@ -214,18 +221,14 @@ class PathBuilder:
 
     def reference_case_dir(self, obstacle: str, Re: int,
                             symmetry: Optional[str] = None) -> str:
+        # NOTE: the reference/conforming solution has NO symmetric/
+        # asymmetric sub-folder, even for the cylinder -- `symmetry` is
+        # accepted here only for a uniform call signature with the
+        # penalized-solution path builders, and is intentionally ignored.
         motion = OBSTACLE_MOTION[obstacle]
         regime = REYNOLDS_REGIME[Re]
         conforming_obstacle_name = CONFORMING_OBSTACLE_NAME[obstacle]
         parts = [self.base_dir, "Conforming", motion, conforming_obstacle_name, regime]
-        parts.append(f"n{self.cfg.reference_n}_Re{Re}")
-        if case_has_symmetry(obstacle, Re):
-            if symmetry is None:
-                raise ValueError(
-                    f"Obstacle '{obstacle}' requires a symmetry value "
-                    f"in {VALID_SYMMETRIES}."
-                )
-            parts.append(symmetry)
         parts.append(f"n{self.cfg.reference_n}_Re{Re}")
         return os.path.join(*parts)
 
@@ -669,13 +672,14 @@ def generate_cases(cfg: AnalysisConfig) -> List[Tuple[str, str, int, Optional[st
     """
     Expands the configuration into the concrete list of
     (method, obstacle, Reynolds, symmetry) combinations to analyze.
-    ``symmetry`` is None for obstacles without a symmetry sub-folder.
+    ``symmetry`` is None whenever that specific (obstacle, Re) combination
+    has no symmetry sub-folder (see ``case_has_symmetry``).
     """
     cases = []
     for method in cfg.methods:
         for obstacle in cfg.obstacles:
             for Re in cfg.reynolds:
-                if OBSTACLE_HAS_SYMMETRY.get(obstacle, False):
+                if case_has_symmetry(obstacle, Re):
                     for sym in cfg.symmetries:
                         cases.append((method, obstacle, Re, sym))
                 else:
@@ -729,7 +733,7 @@ if __name__ == "__main__":
     # Physical obstacle instances (one per obstacle type).
     obstacle_instances = {
         "cylinder": circleObstacle(x=0.5, y=0.5, r=0.1),
-        "square":   squareObstacle(x=0.5, y=0.5, side=0.2),
+        "square":   squareObstacle(x=0.5, y=0.5, side_length=0.2),
     }
 
     # --- Select here which analysis to run ---------------------------------
@@ -738,8 +742,8 @@ if __name__ == "__main__":
         output_dir=os.path.join(current_dir, "results"),
         methods=["Brinkman", "DLM"],       # subset allowed, e.g. ["Brinkman"]
         obstacles=["cylinder", "square"],  # subset allowed, e.g. ["square"]
-        reynolds=[40, 80],                 # subset allowed, e.g. [40]
-        symmetries=["symmetric"],          # add "asymmetric" when ready,
+        reynolds=[40],                     # 80 when ready               
+        symmetries=["symmetric"],          # asymmetric when ready
         resolutions=[50, 100, 150],
         R_penalty=1000.0,
     )
