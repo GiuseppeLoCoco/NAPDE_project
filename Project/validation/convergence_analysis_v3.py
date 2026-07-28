@@ -1,5 +1,5 @@
 """
-Convergence analysis pipeline for penalization methods applied to flow past
+Convergence analysis pipeline for non-conforming methods applied to flow past
 an obstacle.
 
 This module was rewritten from scratch to be fully configurable. Instead of
@@ -11,6 +11,7 @@ file). From that configuration the code automatically:
     1. builds every relevant combination of
            method      in {"Brinkman", "DLM"}
            obstacle    in {"cylinder", "square"}
+           kinematics  in {"fixed", "moving"}
            reynolds    in {40, 80}
            symmetry    in {"symmetric", "asymmetric"}   (cylinder only)
     2. resolves the corresponding directory tree, e.g.:
@@ -25,8 +26,7 @@ file). From that configuration the code automatically:
 
 Directory-naming rules
 -----------------------
-- ``motion``  is fixed by the obstacle: "moving" for the cylinder, "fixed"
-  for the square (see ``OBSTACLE_MOTION``).
+- ``motion``  is independent on the obstacle (see ``OBSTACLE_MOTION``).
 - ``regime``  is fixed by the Reynolds number: Re = 40 -> "steady",
   Re = 80 -> "unsteady" (see ``REYNOLDS_REGIME``).
 - ``symmetry`` (a "symmetric"/"asymmetric" sub-folder) is present for BOTH
@@ -65,14 +65,16 @@ from firedrake import (Constant, project, assemble, dx, inner, grad, sqrt,
 
 
 # =============================================================================
-# 0. STRUCTURAL RULES (obstacle <-> motion, Reynolds <-> regime, symmetry)
+# 0. STRUCTURAL RULES (Reynolds <-> regime, symmetry)
 # =============================================================================
 
-# Motion regime is entirely determined by the obstacle type.
+
+# Motion regime of the obstacle
 OBSTACLE_MOTION = {
-    "cylinder": "moving",
-    "square":   "fixed",
+    "moving": "moving",
+    "fixed":   "fixed",
 }
+
 
 # Time regime is entirely determined by the Reynolds number.
 REYNOLDS_REGIME = {
@@ -112,6 +114,7 @@ CONFORMING_OBSTACLE_NAME = {
 VALID_SYMMETRIES = ("symmetric", "asymmetric")
 VALID_METHODS = ("Brinkman", "DLM")
 VALID_OBSTACLES = ("cylinder", "square")
+VALID_MOTIONS = ("fixed", "moving")
 
 
 # =============================================================================
@@ -136,6 +139,7 @@ class AnalysisConfig:
     # --- What to analyze -----------------------------------------------
     methods:     List[str] = field(default_factory=lambda: list(VALID_METHODS))
     obstacles:   List[str] = field(default_factory=lambda: list(VALID_OBSTACLES))
+    motion:      List[str] = field(default_factory=lambda: list(VALID_MOTIONS))
     reynolds:    List[int] = field(default_factory=lambda: [40, 80])
     symmetries:  List[str] = field(default_factory=lambda: list(VALID_SYMMETRIES))
     resolutions: List[int] = field(default_factory=lambda: [50, 100, 150])
@@ -146,10 +150,10 @@ class AnalysisConfig:
 
     # --- Time sampling ----------------------------------------------------
     # "steady" cases (Re = 40): a single snapshot is analyzed.
-    t_steady: float = 10.0
+    t_steady: float = 20.0
     # "unsteady" cases (Re = 80): a full time history is analyzed (Bochner norms).
     t_start_unsteady: float = 0.5
-    t_end_unsteady: float = 10.0
+    t_end_unsteady: float = 20.0
     dt_unsteady: float = 0.5
 
     Ly: float = 1.0  # vertical extent of the domain, for profile extraction
@@ -195,9 +199,9 @@ class PathBuilder:
             return f"n{n}_Re{Re}"
         raise ValueError(f"Unknown method '{method}'")
 
-    def case_dir(self, method: str, obstacle: str, Re: int, n: int,
+    def case_dir(self, method: str, obstacle: str, motion: str, Re: int, n: int,
                  symmetry: Optional[str] = None) -> str:
-        motion = OBSTACLE_MOTION[obstacle]
+        motion = OBSTACLE_MOTION[motion]
         regime = REYNOLDS_REGIME[Re]
         parts = [self.base_dir, method, motion, obstacle, regime]
         if case_has_symmetry(obstacle, Re):
@@ -230,13 +234,13 @@ class PathBuilder:
     # See module docstring: this convention is an assumption and is the only
     # place that needs editing if the real layout differs.
 
-    def reference_case_dir(self, obstacle: str, Re: int,
+    def reference_case_dir(self, obstacle: str, motion: str, Re: int,
                             symmetry: Optional[str] = None) -> str:
         # NOTE: the reference/conforming solution has NO symmetric/
         # asymmetric sub-folder, even for the cylinder -- `symmetry` is
         # accepted here only for a uniform call signature with the
         # penalized-solution path builders, and is intentionally ignored.
-        motion = OBSTACLE_MOTION[obstacle]
+        motion = OBSTACLE_MOTION[motion]
         regime = REYNOLDS_REGIME[Re]
         conforming_obstacle_name = CONFORMING_OBSTACLE_NAME[obstacle]
         parts = [self.base_dir, "Conforming", motion, conforming_obstacle_name, regime]
@@ -405,6 +409,7 @@ def load_hdf5_solution(checkpoint_path: str, field_name: str = "velocity"):
 def run_case(cfg: AnalysisConfig,
              method: str,
              obstacle: str,
+             motion: str,
              Re: int,
              symmetry: Optional[str],
              obstacle_instance,
@@ -416,12 +421,12 @@ def run_case(cfg: AnalysisConfig,
     <output_dir>/<case_label>/.
     """
     regime = REYNOLDS_REGIME[Re]
-    case_label = f"{method}_{obstacle}_Re{Re}"
+    case_label = f"{method}_{obstacle}_{motion}_Re{Re}"
     if symmetry is not None:
         case_label += f"_{symmetry}"
 
     print("\n" + "#" * 70)
-    print(f"# CASE: {case_label}  (motion={OBSTACLE_MOTION[obstacle]}, regime={regime})")
+    print(f"# CASE: {case_label}  (motion={OBSTACLE_MOTION[motion]}, regime={regime})")
     print("#" * 70)
 
     analyzer = ConvergenceAnalyzer(obstacle_instance, obstacle, Ly=cfg.Ly)
@@ -679,29 +684,30 @@ def generate_profile_plots(case_label, y_ref, u_ref, profiles, resolutions, plot
 # 10. CASE GENERATION & TOP-LEVEL DRIVER
 # =============================================================================
 
-def generate_cases(cfg: AnalysisConfig) -> List[Tuple[str, str, int, Optional[str]]]:
+def generate_cases(cfg: AnalysisConfig) -> List[Tuple[str, str, str, int, Optional[str]]]:
     """
     Expands the configuration into the concrete list of
-    (method, obstacle, Reynolds, symmetry) combinations to analyze.
+    (method, obstacle, motion, Reynolds, symmetry) combinations to analyze.
     ``symmetry`` is None whenever that specific (obstacle, Re) combination
     has no symmetry sub-folder (see ``case_has_symmetry``).
     """
     cases = []
     for method in cfg.methods:
         for obstacle in cfg.obstacles:
-            for Re in cfg.reynolds:
-                if case_has_symmetry(obstacle, Re):
-                    for sym in cfg.symmetries:
-                        cases.append((method, obstacle, Re, sym))
+            for motion in cfg.motion:
+                for Re in cfg.reynolds:
+                    if case_has_symmetry(obstacle, Re):
+                        for sym in cfg.symmetries:
+                            cases.append((method, obstacle, motion, Re, sym))
                 else:
-                    cases.append((method, obstacle, Re, None))
+                    cases.append((method, obstacle, motion, Re, None))
     return cases
 
 
 def run_pipeline(cfg: AnalysisConfig, obstacle_instances: Dict[str, object]):
     """
     Runs the full convergence-analysis campaign: every (method, obstacle,
-    Reynolds, symmetry) combination described by ``cfg`` is processed and
+    motion, Reynolds, symmetry) combination described by ``cfg`` is processed and
     written to its own sub-folder of ``cfg.output_dir``.
 
     obstacle_instances: mapping "cylinder" -> circleObstacle(...) instance,
@@ -713,12 +719,12 @@ def run_pipeline(cfg: AnalysisConfig, obstacle_instances: Dict[str, object]):
     print(f">> Total cases to process: {len(cases)}")
 
     all_summaries = {}
-    for method, obstacle, Re, symmetry in cases:
+    for method, obstacle, motion, Re, symmetry in cases:
         obstacle_instance = obstacle_instances[obstacle]
-        label = f"{method}_{obstacle}_Re{Re}" + (f"_{symmetry}" if symmetry else "")
+        label = f"{method}_{obstacle}_{motion}_Re{Re}" + (f"_{symmetry}" if symmetry else "")
         try:
             all_summaries[label] = run_case(
-                cfg, method, obstacle, Re, symmetry, obstacle_instance, paths
+                cfg, method, obstacle, motion, Re, symmetry, obstacle_instance, paths
             )
         except Exception as exc:
             print(f"  [Error] Case '{label}' failed: {exc}")
@@ -753,6 +759,7 @@ if __name__ == "__main__":
         output_dir=os.path.join(current_dir, "results"),
         methods=["Brinkman", "DLM"],       # subset allowed, e.g. ["Brinkman"]
         obstacles=["cylinder", "square"],  # subset allowed, e.g. ["square"]
+        motion=["fixed", "moving"],        # subset allowed, e.g. ["fixed"]
         reynolds=[40],                     # 80 when ready               
         symmetries=["symmetric"],          # asymmetric when ready
         resolutions=[50, 100, 150],
