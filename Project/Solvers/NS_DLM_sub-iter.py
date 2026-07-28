@@ -197,8 +197,8 @@ class NS_DLM_Solver:
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)
         # ---------------------------------
         fsi_interpolation = FSIInterpolation()
-        fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
-        fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
+        # fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
+        # fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
 
         # ---------------------------------
         # DEFINE VARIATIONAL PROBLEMS
@@ -257,29 +257,11 @@ class NS_DLM_Solver:
             print('t =', t_val)
             t.assign(t_val)
 
+            # Parameters for DLM Convergence Loop
+            sub_tol = 1e-5         # Tollerance on variation of the Lagrange multiplier
+            max_sub_iters = 20     # Max number of iterations for sub-iteration loop
+
             time_varying_bc(t_val)
-
-            """
-            !!! Old code for moving and updating the solid mesh coordinates and velocity !!!
-
-            It works only for the cylinder obstacle
-
-            # Update solid position and velocity
-            x_solid = SpatialCoordinate(solid_mesh.mesh)
-            Dp_old.assign(Dp_new)
-            
-            # Compute the displacement Dp_[0]
-            displ_x = (amplitude * 0.5 * (1.0 - math.cos(0.2 * math.pi * t_val)))
-            displ_y = 0.0
-            Dp_new.interpolate(as_vector([displ_x, 0.0]))
-            # Compute the incremental displacement Dp_[1] = Dp_new - Dp_old
-            Dp_inc.assign(Dp_new - Dp_old)
-
-            # Move solid mesh coordinates
-            solid_mesh.coordinates.assign(init_coords + Dp_new)
-            us_.assign(Dp_inc / Constant(dt))
-
-            """
 
             # Update solid position and velocity
             Dp_old.assign(Dp_new)
@@ -307,40 +289,73 @@ class NS_DLM_Solver:
             fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
             fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
 
+            # ============================
+            # SUB-ITERATIONS LOOP 
+            # ============================
+            
+            # Initialization for the sub-iteration loop
+            sub_iter = 0
+            converged = False
+            
+            # Alla prima sotto-iterazione partiamo dalla soluzione del passo precedente
+            # uh_current viene usata come guess per la velocità tentative
+            uh_current = Function(V)
+            uh_current.assign(uh_n) 
+
             # Update Lagrange multiplier for new time step
             Lm_[1].assign(Lm_[0])
             # Interpolate Lagrange multiplier from solid mesh to fluid mesh
             Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
 
-            # ------- STEP 1: Solve tentative velocity -------
-            solve(a1 == L1, sol_star, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+            # Lm_f_start_step = Function(Z1)
+            # Lm_f_start_step.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
 
-            # Interpolate velocity onto solid mesh
-            uf_.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, u_star, "S"))
+            while not converged and sub_iter < max_sub_iters:
 
+                sub_iter += 1
 
-            # ------- STEP 2: Solve Lagrange multiplier -------
-            solve(a2 == L2, Lm_[0], solver_parameters={'ksp_type': 'bcgs', 'pc_type': 'sor'})
+                Lm_f_old.assign(Lm_f)
 
-            # Interpolate Lagrange multiplier
-            Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
-            Lm_f_old.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
+                # ------- STEP 1: Solve tentative velocity -------
+                solve(a1 == L1, sol_star, bcs=bcs, 
+                        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
+                # Interpolate tentative velocity onto solid mesh
+                uf_.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, u_star, "S"))
 
-            # ------- STEP 3: Solve velocity correction -------
-            solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
+                # ------- STEP 2: Solve Lagrange multiplier -------
+                solve(a2 == L2, Lm_[0], solver_parameters={'ksp_type': 'bcgs', 'pc_type': 'sor'})
+
+                # Interpolate Lagrange multiplier onto fluid mesh
+                Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
+
+                # ------- STEP 3: Solve velocity correction -------
+                solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
+
+                # ------- Convergence Criterion -------
+                # Compute the L2-norm on the increment || Lm_f^(k+1) - Lm_f^(k) ||
+                diff_Lm = norm(Lm_f - Lm_f_old)
+                norm_Lm = norm(Lm_f) + 1e-12           # To avoid zero division
+                rel_increment = diff_Lm / norm_Lm
+
+                print(f"\t [Sub-iteration: {sub_iter}] Relative L_m Increment: {rel_increment:.4e} (Abs: {diff_Lm:.4e})")
+
+                if rel_increment < sub_tol:
+                    converged = True
+                    print(f"\t Convergece achieved in {sub_iter} iterations.")
+
+                # Update estimated Lagrange Multiplier for the next sub-iteration
+                Lm_[1].assign(Lm_[0])
+
+            if not converged:
+                print(f"\t WARNING: Sub-iteration not converged within {max_sub_iters} iterations!")
+            
             # Update previous solution
             uh_n.assign(uh)
-
 
             # ------- Print max velocity -------
             print('\tu_max:', uh.dat.data.max())
             # ----------------------------------
-
-
-            # coords = solid_mesh.mesh.coordinates.dat.data_ro
-            # print("Solid mesh center:", coords.mean(axis=0), "y-range:", coords[:,1].min(), coords[:,1].max())
-
 
             # ------- Create output directories ------- 
             dir_vtk = os.path.join(basedir, "vtk")

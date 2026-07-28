@@ -67,8 +67,8 @@ class Brinkman_solver:
 
         tol = 1e-10
 
-        T_end = 10.0            # Final time
-        num_steps = 20          # Number of time steps
+        T_end = 20.0            # Final time
+        num_steps = 40          # Number of time steps
         dt = T_end / num_steps  # Time step size
         
         # Reynolds number

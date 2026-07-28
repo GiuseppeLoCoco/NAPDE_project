@@ -47,8 +47,8 @@ class Conforming_solver:
         mesh = conforming_mesh(Lx, Ly, self.obstacle, n)
         
         tol = 1e-10
-        T_end = 10.0             # final time
-        num_steps = 20           # number of time steps
+        T_end = 20.0             # final time
+        num_steps = 40           # number of time steps
         dt = T_end / num_steps   # time step size
 
         # Reynolds number
