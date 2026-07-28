@@ -739,7 +739,7 @@ if __name__ == "__main__":
         methods=["Brinkman", "DLM"],       # subset allowed, e.g. ["Brinkman"]
         obstacles=["cylinder", "square"],  # subset allowed, e.g. ["square"]
         reynolds=[40, 80],                 # subset allowed, e.g. [40]
-        symmetries=["symmetric", "asymmetric"],
+        symmetries=["symmetric"],          # add "asymmetric" when ready,
         resolutions=[50, 100, 150],
         R_penalty=1000.0,
     )
