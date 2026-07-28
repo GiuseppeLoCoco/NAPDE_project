@@ -178,7 +178,7 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
     return m
 
 
-def create_solid_mesh(obstacle_obj):
+def create_solid_mesh(obstacle_obj, n):
     """
     Creates a Firedrake mesh for the solid obstacle.
     """
@@ -212,6 +212,7 @@ def create_solid_mesh(obstacle_obj):
         gmsh.finalize()
         raise TypeError(f"Obstacle type {type(obstacle_obj)} not supported for solid mesh creation.")
 
+    gmsh.model.occ.synchronize()
     gmsh.option.setNumber("Mesh.CharacteristicLengthMin", res)
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", res)
     gmsh.model.mesh.generate(2)

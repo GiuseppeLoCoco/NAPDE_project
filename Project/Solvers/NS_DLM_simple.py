@@ -32,7 +32,7 @@ class NS_DLM_Solver:
     def __init__(self, moving=True, type_obstacle="cylinder"):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
-        self.unsteady = False
+        self.unsteady = True
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
@@ -119,7 +119,7 @@ class NS_DLM_Solver:
         t = Constant(0.0)
 
         # Create the solid mesh based on the obstacle type
-        solid_mesh = create_solid_mesh(self.obstacle)
+        solid_mesh = create_solid_mesh(self.obstacle, n)
 
         # --------------------------------
         # Initialize Flow Variational Problem
