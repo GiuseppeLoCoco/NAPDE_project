@@ -16,7 +16,7 @@ from post_processing import save_VTK, save_checkpoint, plot_results, create_outp
 
 class Brinkman_solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder"):
+    def __init__(self, moving=True, type_obstacle="square"):
 
         self.moving = moving
         self.symmetric = True
@@ -100,7 +100,7 @@ class Brinkman_solver:
         f  = Constant((0, 0))
         t = Constant(0.0)
 
-        R = 1000.0
+        R = 1000000.0
 
         if self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)

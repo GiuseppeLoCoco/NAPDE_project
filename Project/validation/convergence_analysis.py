@@ -73,6 +73,29 @@ class ConvergenceAnalyzer:
 
         return y_coords, u_mag
 
+    def compute_pressure_error_L2(self, p_ex, p_h, t_val):
+        """
+        Computes L2 error norm for pressure within the fluid domain at a given instant.
+        """
+        V_ex = p_ex.function_space()
+        mesh_ex = V_ex.mesh()
+        t_const = Constant(t_val)
+
+        p_h_proj = project(p_h, V_ex)
+
+        chi_solid = self.obstacle.chi(mesh_ex, t_const)
+        mask_fluid = 1.0 - chi_solid
+
+        # Opzionale: rimozione del valore medio nel fluido per la pressione
+        vol_fluid = assemble(mask_fluid * dx(domain=mesh_ex))
+        mean_p_ex = assemble(mask_fluid * p_ex * dx) / vol_fluid
+        mean_p_h = assemble(mask_fluid * p_h_proj * dx) / vol_fluid
+
+        err_p = (p_h_proj - mean_p_h) - (p_ex - mean_p_ex)
+
+        err_p_L2_sq = assemble(mask_fluid * inner(err_p, err_p) * dx)
+        return sqrt(err_p_L2_sq)
+
 
 # OUTPUT DIRECTORY SETUP
 
@@ -188,6 +211,25 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
         if abs(t - t_end) < 1e-5:
             y_ref, u_ref = analyzer.extract_vertical_profile(u_ex, t)
 
+            # Carica pressione di riferimento conforme
+            conf_p_dir = os.path.join(base_dir, "src", "cyl", "conforming", "moving", "n70", "pressure")
+            conf_p_file = os.path.join(conf_p_dir, f"pressure_t={t_str}.h5")
+            p_ex = load_hdf5_solution(conf_p_file, "pressure")
+            
+            y_ref, u_ref = analyzer.extract_vertical_profile(u_ex, t)
+
+            # Nel ciclo sui metodi e risoluzioni per l'ultimo step:
+            for method in methods:
+                for n in resolutions:
+                    chk_p_dir = os.path.join(base_dir, "src", "cyl", method, "moving", f"n{n}_R1000.0", "pressure")
+                    chk_p_file = os.path.join(chk_p_dir, f"pressure_t={t_str}.h5")
+                    
+                    if os.path.exists(chk_p_file):
+                        p_h = load_hdf5_solution(chk_p_file, "pressure")
+                        # Calcolo errore pressione a t = T
+                        err_p_L2 = analyzer.compute_pressure_error_L2(p_ex, p_h, t)
+                        # Salva err_p_L2 in una struttura dati dedicata alla pressione
+
         print()
 
     # =============================================================================
@@ -262,6 +304,15 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
 
     if y_ref is not None:
         generate_profile_plots(y_ref, u_ref, profiles, methods, resolutions, dirs["profiles"])
+
+    # Convergence Rates for Pressure L2 Norm at final time step
+    rates_p = []
+    for i in range(len(resolutions) - 1):
+        e1_p, e2_p = errors_p_L2[i], errors_p_L2[i+1]
+        log_h = np.log(dx_h[i] / dx_h[i+1])
+        rate_p = np.log(e1_p / e2_p) / log_h
+        rates_p.append(rate_p)
+        print(f" Pressure L2 Rate n={resolutions[i]}→{resolutions[i+1]} at t=T: {rate_p:+.3f}")
 
     print(f"\n>> All the results are saved in: {output_dir}/")
 
