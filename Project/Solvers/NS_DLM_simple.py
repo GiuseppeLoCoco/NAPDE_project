@@ -191,6 +191,8 @@ class NS_DLM_Solver:
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
         bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
 
+        bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
+
         # ---------------------------------
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)
         # ---------------------------------
@@ -326,7 +328,7 @@ class NS_DLM_Solver:
 
 
             # ------- STEP 3: Solve velocity correction -------
-            solve(a3 == L3, uh, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
+            solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
             # Update previous solution
             uh_n.assign(uh)
 

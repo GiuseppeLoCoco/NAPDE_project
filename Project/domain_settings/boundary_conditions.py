@@ -28,6 +28,15 @@ def create_boundary_conditions(fluid_mesh, type_obstacle: str, **V):
     bcs = [bcu_inflow, bcu_walls, bcp_outflow]
     return bcs
 
+def create_boundary_conditions_correction(fluid_mesh, V, type_obstacle: str):
+    inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle = type_obstacle)
+    # Target velocity sub-space (V['fluid'][0]) and pressure sub-space (V['fluid'][1])
+    bcu_inflow = DirichletBC(V, inflow_profile, 1)
+    bcu_walls = DirichletBC(V, Constant((0.0, 0.0)), (3, 4))
+
+    bcs = [bcu_inflow, bcu_walls]
+    return bcs
+
 def create_bcs_penalty(W, mesh, type_obstacle: str):
     """
     Crea le condizioni al contorno per i solutori Brinkman e RIIS
