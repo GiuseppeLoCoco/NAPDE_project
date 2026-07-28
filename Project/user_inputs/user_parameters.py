@@ -27,6 +27,10 @@ side_length = 0.2
 
 # -------------------------
 
+# Sub-iteration parameters for DLM convergence
+max_iter_DLM = 20
+tol_DLM = 0.05
+
 
 # ---- Physics and numerical parameters ----
 

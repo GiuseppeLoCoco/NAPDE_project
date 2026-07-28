@@ -29,17 +29,17 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder"):  
+    def __init__(self, type_obstacle, moving):  
 
         self.moving = moving 
-        self.unsteady = True
+        self.unsteady = False
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
 
         # Initialize the obstacle based on the type chosen
         if self.type_obstacle == "cylinder":
-            print("\Obstacle: Cylinder")
+            print("\nObstacle: Cylinder")
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
             if x_obs == y_obs:
                 print("Symmetric Configuration: cylinder centered in the channel")
@@ -107,13 +107,13 @@ class NS_DLM_Solver:
         # Dynamic viscosity
         mu = rho * L_char * u_char / Re
 
-        print("\nCharacteristic length L_char = {}".format(L_char))
-        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
+        print(f"\nCharacteristic length L_char = {L_char}")
+        print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
 
-        if self.unsteady == True:
-            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
+        if self.unsteady:
+            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
         else:
-            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
+            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
@@ -258,8 +258,8 @@ class NS_DLM_Solver:
             t.assign(t_val)
 
             # Parameters for DLM Convergence Loop
-            sub_tol = 1e-5         # Tollerance on variation of the Lagrange multiplier
-            max_sub_iters = 20     # Max number of iterations for sub-iteration loop
+            sub_tol = tol_DLM                # Tollerance on variation of the Lagrange multiplier
+            max_sub_iters = max_iter_DLM     # Max number of iterations for sub-iteration loop
 
             time_varying_bc(t_val)
 
@@ -342,7 +342,7 @@ class NS_DLM_Solver:
 
                 if rel_increment < sub_tol:
                     converged = True
-                    print(f"\t Convergece achieved in {sub_iter} iterations.")
+                    print(f"\t Convergence achieved in {sub_iter} iterations.")
 
                 # Update estimated Lagrange Multiplier for the next sub-iteration
                 Lm_[1].assign(Lm_[0])
@@ -382,9 +382,9 @@ if __name__ == "__main__":
     parser.add_argument('--obstacle', type=str, default='cylinder',
                         choices=['cylinder', 'square', 'line', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
-    
-    args = parser.parse_args()
+    parser.add_argument('--moving', action='store_true', help='Flag to indicate if the obstacle is moving.')
 
-    # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
-    solver = NS_DLM_Solver(type_obstacle=args.obstacle)
+    args, unknown = parser.parse_known_args()
+
+    solver = NS_DLM_Solver(type_obstacle=args.obstacle, moving=args.moving)
     solver.NS_DLM_Solve(args)
