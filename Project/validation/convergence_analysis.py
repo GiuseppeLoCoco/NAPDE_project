@@ -152,11 +152,12 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
     # Simulation parameters
     t_start, t_end, dt = 0.5, 10.0, 0.5
     time_steps = np.arange(t_start, t_end + dt, dt)
-    resolutions = [25, 50, 70]
-    methods = ["brinkman", "RIIS"]
+    resolutions = [50, 100, 150]
+    methods = ["Brinkman-Cylinder", "Brinkman-Square", "DLM-Cylinder", "DLM-Square"]
     
     # Data storage structure
     results = {method: {n: {"L2": [], "H1": []} for n in resolutions} for method in methods}
+    pressure_results_final = {method: {n: float('nan') for n in resolutions} for method in methods}
     profiles = {method: {} for method in methods}
     y_ref    = None
     u_ref    = None
@@ -218,7 +219,6 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
             
             y_ref, u_ref = analyzer.extract_vertical_profile(u_ex, t)
 
-            # Nel ciclo sui metodi e risoluzioni per l'ultimo step:
             for method in methods:
                 for n in resolutions:
                     chk_p_dir = os.path.join(base_dir, "src", "cyl", method, "moving", f"n{n}_R1000.0", "pressure")
@@ -229,7 +229,13 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
                         # Calcolo errore pressione a t = T
                         err_p_L2 = analyzer.compute_pressure_error_L2(p_ex, p_h, t)
                         # Salva err_p_L2 in una struttura dati dedicata alla pressione
-
+                        pressure_results_final[method][n] = err_p_L2
+                        results[method][n]["p_L2"].append(err_p_L2)
+                    else:
+                        print(f" [Warning] Missing pressure penalty file: {chk_p_file}")
+                        results[method][n]["p_L2"].append(float('nan'))
+            else:
+                print(f" [Warning] Conforming pressure reference missing at t={t_end}.")
         print()
 
     # =============================================================================
@@ -246,6 +252,7 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
         # Compute discrete L2(0,T; L2) spatio-temporal error
         errors_L2_T = []
         errors_H1_T = []
+        errors_p_final = []
         dx_h = [1.0/n for n in resolutions] # Characteristic mesh sizes
         
         for n in resolutions:
@@ -257,6 +264,7 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
                 print(f" Mesh n={n:2d} | No valid data steps found.")
                 errors_L2_T.append(float('nan'))
                 errors_H1_T.append(float('nan'))
+                errors_p_final.append(float('nan'))
                 continue
             
             valid_times = time_steps[mask]
@@ -265,16 +273,21 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
             bochner_H1 = sqrt(np.trapezoid(h1_arr[mask]**2, valid_times))
             errors_L2_T.append(bochner_L2)
             errors_H1_T.append(bochner_H1)
+
+            err_p_T = pressure_results_final[method][n]
+            errors_p_final.append(err_p_T)
             
-            print(f" Mesh n={n:2d} | Bochner L2 Error: {bochner_L2:.5e} | Bochner H1 Error: {bochner_H1:.5e}")
+            print(f" Mesh n={n:2d} | Bochner L2 Error: {bochner_L2:.5e} | Bochner H1 Error: {bochner_H1:.5e} | Pressure L2 (t=T): {err_p_T:.5e}")
 
         print()
         rates_L2 = []
         rates_H1 = []
+        rates_p  = []
 
         for i in range(len(resolutions) - 1):
             e1_L2, e2_L2 = errors_L2_T[i], errors_L2_T[i+1]
             e1_H1, e2_H1 = errors_H1_T[i], errors_H1_T[i+1]
+            e1_p,  e2_p  = errors_p_final[i], errors_p_final[i+1]
 
             if not any(np.isnan([e1_L2, e2_L2, e1_H1, e2_H1])):
                 log_h = np.log(dx_h[i] / dx_h[i+1])
@@ -288,13 +301,25 @@ def run_pipeline(base_dir, obstacle_model, output_dir="results"):
                 rates_L2.append(float('nan'))
                 rates_H1.append(float('nan'))
 
+
+            if not any(np.isnan([e1_p, e2_p])):
+                rate_p = np.log(e1_p / e2_p) / log_h
+                rates_p.append(rate_p)
+            else:
+                rates_p.append(float('nan'))
+
+            print(f"  Rate n={resolutions[i]}→{resolutions[i+1]}: "
+                  f"p_uL2={rates_L2[-1]:+.3f}  p_uH1={rates_H1[-1]:+.3f}  p_pL2={rates_p[-1]:+.3f}")
+
         summary[method] = {
             "resolutions": resolutions,
             "h":           dx_h,
             "L2":          errors_L2_T,
             "H1":          errors_H1_T,
+            "p_L2_final":  errors_p_final,
             "rates_L2":    rates_L2,
             "rates_H1":    rates_H1,
+            "rates_p":     rates_p
         }
 
     _save_summary(summary, dirs["data"])
@@ -333,6 +358,7 @@ def _save_summary(summary, data_dir):
             f.write("\nConvergence rates:\n")
             for i, (rL2, rH1) in enumerate(zip(s["rates_L2"], s["rates_H1"])):
                 n1, n2 = s["resolutions"][i], s["resolutions"][i+1]
+                rL2, rH1, rP = s["rates_L2"][i], s["rates_H1"][i], s["rates_p"][i]
                 f.write(f"  n={n1}→{n2}: p_L2={rL2:+.3f}  p_H1={rH1:+.3f}\n")
             f.write("\n")
     print(f"\n   Summary saved: {path}")
@@ -344,10 +370,15 @@ def _save_raw_errors(results, time_steps, resolutions, methods, data_dir):
             path = os.path.join(data_dir, f"errors_{method}_n{n}.csv")
             l2 = results[method][n]["L2"]
             h1 = results[method][n]["H1"]
+            p_l2 = results[method][n]["p_L2"]
+
             with open(path, "w") as f:
-                f.write("t,L2_error, H1_error\n")
+                f.write("t,L2_error, H1_error, p_L2_error\n")
                 for t, e2, e1 in zip(time_steps, l2, h1):
-                    f.write(f"{t:.2f},{e2:.6e},{e1:.6e}\n")
+                    e2 = l2[i] if i < len(l2) else float('nan')
+                    e1 = h1[i] if i < len(h1) else float('nan')
+                    ep = p_l2[0] if (abs(t - time_steps[-1]) < 1e-5 and len(p_l2) > 0) else float('nan')
+                    f.write(f"{t:.2f},{e2:.6e},{e1:.6e},{ep:.6e}\n")
 
 
 def generate_convergence_plots(summary, plot_dir):
@@ -356,8 +387,8 @@ def generate_convergence_plots(summary, plot_dir):
       1. Grafico log-log errore vs h per L2 e H1
       2. Evoluzione temporale degli errori (se si passa results)
     """
-    colors  = {"brinkman": "#2c7bb6", "RIIS": "#d7191c"}
-    markers = {25: "o", 50: "s", 70: "^"}
+    colors  = {"Brinkman": "#2c7bb6", "DLM": "#d7191c"}
+    markers = {50: "o", 100: "s", 150: "^"}
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     fig.suptitle("Spatial Convergence — Bochner Norms", fontsize=13, fontweight="bold")
@@ -403,7 +434,7 @@ def generate_profile_plots(y_ref, u_ref, profiles, methods, resolutions, plot_di
     Profilo verticale della velocità al tempo finale per ogni metodo.
     Un file PNG separato per ciascun metodo.
     """
-    colors = {25: "#f4a61d", 50: "#2ca02c", 70: "#d62728"}
+    colors = {50: "#f4a61d", 100: "#2ca02c", 150: "#d62728"}
 
     for method in methods:
         fig, ax = plt.subplots(figsize=(7, 6))
@@ -446,7 +477,7 @@ def generate_profile_plots_ver2(y_ref, u_ref, profiles, methods, resolutions, pl
     Profilo verticale della velocità al tempo finale per ogni metodo.
     Tutti i metodi in una sola figura con subplots per confronto diretto.
     """
-    colors = {25: "#f4a61d", 50: "#2ca02c", 70: "#d62728"}
+    colors = {50: "#f4a61d", 100: "#2ca02c", 150: "#d62728"}
 
     n_methods = len(methods)
     fig, axes = plt.subplots(1, n_methods, figsize=(7 * n_methods, 6), sharey=True)
@@ -486,7 +517,7 @@ def generate_profile_plots_ver2(y_ref, u_ref, profiles, methods, resolutions, pl
 """
 def generate_plots(y_ref, u_ref, profiles, methods, resolutions):
 
-    colors = {25: '#f4c430', 50: '#5cb85c', 70: '#d9534f'}
+    colors = {50: '#f4c430', 100: '#5cb85c', 150: '#d9534f'}
     
     for method in methods:
         plt.figure(figsize=(9, 6))
@@ -532,7 +563,7 @@ if __name__ == "__main__":
     if parent_dir not in sys.path:
         sys.path.append(parent_dir)
         
-    from domain_settings.obstacles import circleObstacle
+    from domain_settings.obstacles import circleObstacle, squareObstacle
 
     # 2. Instantiate your obstacle with the physical parameters 
     obstacle = circleObstacle(x=0.5, y=0.5, r=0.1) 
