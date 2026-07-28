@@ -84,7 +84,12 @@ REYNOLDS_REGIME = {
 # flip the square's value to True the day that split also exists for it.
 OBSTACLE_HAS_SYMMETRY = {
     "cylinder": True,
-    "square":   False,
+    "square":   True,
+}
+
+CONFORMING_OBSTACLE_NAME = {
+    "cylinder": "cylinder",
+    "square":   "square",
 }
 
 VALID_SYMMETRIES = ("symmetric", "asymmetric")
@@ -209,6 +214,19 @@ class PathBuilder:
                     f"in {VALID_SYMMETRIES}."
                 )
             parts.append(symmetry)
+        parts.append(f"n{self.cfg.reference_n}_Re{Re}")
+        return os.path.join(*parts)
+
+    def reference_case_dir(self, obstacle: str, Re: int,
+                            symmetry: Optional[str] = None) -> str:
+        # NOTE: the reference/conforming solution has NO symmetric/
+        # asymmetric sub-folder, even for the cylinder -- `symmetry` is
+        # accepted here only for a uniform call signature with the
+        # penalized-solution path builders, and is intentionally ignored.
+        motion = OBSTACLE_MOTION[obstacle]
+        regime = REYNOLDS_REGIME[Re]
+        conforming_obstacle_name = CONFORMING_OBSTACLE_NAME[obstacle]
+        parts = [self.base_dir, "Conforming", motion, conforming_obstacle_name, regime]
         parts.append(f"n{self.cfg.reference_n}_Re{Re}")
         return os.path.join(*parts)
 
