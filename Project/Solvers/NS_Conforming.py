@@ -1,5 +1,6 @@
 import sys
 import os
+import gc 
 from time import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
@@ -15,7 +16,7 @@ from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, line
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
-    def __init__(self, moving=True, type_obstacle="cylinder"):
+    def __init__(self, moving=False, type_obstacle="square"):
 
         self.moving = moving
         self.symmetric = True
@@ -165,7 +166,7 @@ class Conforming_solver:
                 uh, ph = sol.subfunctions
 
                 # Re-create BCs and variational forms on the new spaces
-                bcs = create_bcs_conforming(W, mesh, w)
+                bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
 
                 a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
                       + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
@@ -187,6 +188,12 @@ class Conforming_solver:
 
             # Print max velocity
             print('\tu_max:', uh.dat.data.max())
+            # Cancella gli oggetti pesanti legati alla vecchia mesh
+            if self.moving:
+                del a, L, bcs, sol
+            
+            # Forza lo spazzino di Python a liberare fisicamente la RAM
+            gc.collect()
 
         wall_time = time() - t_start
 
