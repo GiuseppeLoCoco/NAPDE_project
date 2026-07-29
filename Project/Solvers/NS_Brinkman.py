@@ -89,13 +89,13 @@ class Brinkman_solver:
         # Dynamic viscosity
         mu = rho * L_char * u_char / Re
 
-        print("\nCharacteristic length L_char = {}".format(L_char))
-        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
+        print(f"\nCharacteristic length L_char = {L_char}")
+        print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
 
-        if self.unsteady == True:
-            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
+        if self.unsteady:
+            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
         else:
-            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
+            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f  = Constant((0, 0))
         t = Constant(0.0)

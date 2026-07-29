@@ -44,7 +44,7 @@ class Conforming_solver:
         else:
             raise ValueError(f"Unsupported obstacle type: {self.type_obstacle}")
 
-        mesh = conforming_mesh(Lx, Ly, self.obstacle, n)
+        mesh = conforming_mesh(Lx, Ly, self.obstacle, n_conforming)
         
         tol = 1e-10
         T_end = 20.0             # final time
@@ -69,13 +69,13 @@ class Conforming_solver:
         # Dynamic viscosity
         mu = rho * L_char * u_char / Re
 
-        print("\nCharacteristic length L_char = {}".format(L_char))
-        print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
+        print(f"\nCharacteristic length L_char = {L_char}")
+        print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
 
-        if self.unsteady == True:
-            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
+        if self.unsteady:
+            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
         else:
-            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
+            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
@@ -203,5 +203,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Navier-Stokes Conforming solver script')
     args = parser.parse_args()
     
-    solver = Conforming_solver(moving=True)
+    solver = Conforming_solver(moving=False, type_obstacle="square")
     solver.conforming_solve(args)

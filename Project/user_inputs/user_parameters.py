@@ -18,6 +18,7 @@ line_thickness = 0.02
 
 # Discretization parameter: number of elements
 n = 150
+n_conforming = 200
 
 # Cylinder and Square Obstacle parameters
 x_obs = 0.5
