@@ -8,22 +8,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'd
 
 from firedrake import *
 import argparse
-from domain_settings import *
 from user_inputs import *
+import user_inputs.user_parameters as user_parameters
 from math import cos, pi as PI, sin # Keep for local math.cos, math.sin usage
 
 from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
-    def __init__(self, moving=False, type_obstacle="square"):
+    def __init__(self, moving=False, type_obstacle="square", n=None, unsteady=False):
 
         self.moving = moving
         self.symmetric = True
-        self.unsteady = False
+        self.unsteady = unsteady
         self.instationary = True
         # self.mean = True
         self.type_obstacle = type_obstacle
+        self.n = n if n is not None else user_parameters.n_conforming
 
     def conforming_solve(self, args=None):
 
@@ -44,7 +45,7 @@ class Conforming_solver:
         else:
             raise ValueError(f"Unsupported obstacle type: {self.type_obstacle}")
 
-        mesh = conforming_mesh(Lx, Ly, self.obstacle, n_conforming)
+        mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n)
         
         tol = 1e-10
         T_end = 20.0             # final time
@@ -122,7 +123,7 @@ class Conforming_solver:
             'obstacle': self.type_obstacle,
             'unsteady': self.unsteady,
             'symmetric': self.symmetric, 
-            'n': n,
+            'n': self.n,
             'Re': Re,
         }
         basedir, file_dict = create_output_folders('Conforming', params)

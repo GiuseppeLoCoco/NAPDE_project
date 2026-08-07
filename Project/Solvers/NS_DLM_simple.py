@@ -7,8 +7,8 @@ from time import time, perf_counter
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
-from domain_settings import *
 from user_inputs import *
+import user_inputs.user_parameters as user_parameters
 import math
 import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
@@ -29,13 +29,14 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder"):  
+    def __init__(self, moving=True, type_obstacle="cylinder", n=None, unsteady=True):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
-        self.unsteady = True
+        self.unsteady = unsteady
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
+        self.n = n if n is not None else user_parameters.n
 
         # Inizializza l'ostacolo e imposta le proprietà in base al suo tipo
         if self.type_obstacle == "cylinder":
@@ -79,7 +80,8 @@ class NS_DLM_Solver:
         if args and hasattr(args, "velocity_degree") and args.velocity_degree:
             fem_degree.update({"velocity_degree": args.velocity_degree})
         # Create the meshes
-        fluid_mesh = create_fluid_mesh(Lx, Ly, n)
+        
+        fluid_mesh = create_fluid_mesh(Lx, Ly, self.n)
         # ==================================
         # DATA AND SOLVER
         # ==================================
@@ -119,7 +121,7 @@ class NS_DLM_Solver:
         t = Constant(0.0)
 
         # Create the solid mesh based on the obstacle type
-        solid_mesh = create_solid_mesh(self.obstacle, n)
+        solid_mesh = create_solid_mesh(self.obstacle, self.n)
 
         # --------------------------------
         # Initialize Flow Variational Problem
@@ -351,7 +353,7 @@ class NS_DLM_Solver:
             
             # ------- Save output & plot (with solid mesh) -------
             save_VTK(file_dict, t_val, uh, ph)
-            save_checkpoint(dir_vtk, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
+            save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
             plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir = dir_plots_with_solid, solid_mesh=solid_mesh)
 
             # ------- Plot (without solid mesh) -------

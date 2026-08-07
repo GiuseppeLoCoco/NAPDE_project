@@ -10,20 +10,23 @@ import argparse
 from math import cos, pi as PI
 
 from user_inputs import *
+import user_inputs.user_parameters as user_parameters
 from domain_settings import create_bcs_penalty, time_varying_bc
 from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Brinkman_solver:
 
-    def __init__(self, moving=True, type_obstacle="square"):
+    def __init__(self, moving=False, type_obstacle="square", n=None, R=None, unsteady=False):
 
         self.moving = moving
         self.symmetric = True
-        self.unsteady = False
+        self.unsteady = unsteady
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
+        self.n = n if n is not None else user_parameters.n
+        self.R = R if R is not None else getattr(user_parameters, 'R', 1000.0)
 
     def Brinkman_solve(self, args=None):
 
@@ -43,7 +46,7 @@ class Brinkman_solver:
                 print("\nObstacle: Square")
                 self.obstacle = squareObstacle(x_obs, y_obs, side_length)
 
-            if x_obs == y_obs:
+            if y_obs == Ly/2:
                 print("\nSymmetric configuration: cylinder centered in the channel")
                 self.symmetric = True
             else:
@@ -59,7 +62,7 @@ class Brinkman_solver:
             else:
                 print("\nObstacle: Rotating Line")
 
-        mesh = RectangleMesh(n, int(n * Ly / Lx), Lx, Ly)
+        mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
 
         # ==================================
         # DATA AND SOLVER
@@ -100,7 +103,7 @@ class Brinkman_solver:
         f  = Constant((0, 0))
         t = Constant(0.0)
 
-        R = 1000000.0
+        R = self.R
 
         if self.type_obstacle == "square":
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
@@ -160,7 +163,7 @@ class Brinkman_solver:
             'obstacle': self.type_obstacle,
             'unsteady': self.unsteady,
             'symmetric': self.symmetric,
-            'n': n,
+            'n': self.n,
             'R': R,
             'Re': Re,
         }
