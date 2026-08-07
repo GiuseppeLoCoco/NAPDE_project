@@ -29,14 +29,15 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder", n=None, unsteady=True):  
+    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
-        self.unsteady = unsteady
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
+        self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
         # Inizializza l'ostacolo e imposta le proprietà in base al suo tipo
         if self.type_obstacle == "cylinder":
@@ -92,10 +93,7 @@ class NS_DLM_Solver:
         dt = T_end / num_steps   # time step size
 
         # Reynolds number
-        if self.unsteady:
-            Re = 80
-        else:
-            Re = 40
+        Re = self.Re
 
         # Density   
         rho = 1.0  
@@ -239,7 +237,6 @@ class NS_DLM_Solver:
         params = {
             'moving': self.moving,
             'obstacle': self.type_obstacle,
-            'unsteady': self.unsteady,
             'symmetric': self.symmetric, 
             'n': n,
             'Re': Re,

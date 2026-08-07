@@ -40,11 +40,11 @@ from Solvers.NS_DLM_simple import NS_DLM_Solver
 # 1. HELPER FUNCTIONS FOR PATH RESOLUTION AND HDF5 LOADING
 # =============================================================================
 
-def get_case_directory(solver_name: str, obstacle: str, Re: int, n: int, R_penalty: float = 1000.0) -> str:
+def get_case_directory(solver_name: str, obstacle: str, Re: float, n: int, R_penalty: float = 1000.0) -> str:
     """Returns the output directory path where solver checkpoints are saved."""
-    regime = "steady" if Re == 40 else "unsteady"
+    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
     param_str = f"n{n}_R{R_penalty}_Re{Re}" if solver_name.lower() == "brinkman" else f"n{n}_Re{Re}"
-    return os.path.join(project_dir, "Plots", solver_name, "fixed", obstacle, regime, param_str)
+    return os.path.join(project_dir, "Plots", solver_name, "fixed", obstacle, sym_str, param_str)
 
 
 def get_field_filepath(case_dir: str, field_name: str, t_val: float) -> str:
@@ -115,7 +115,7 @@ def run_convergence_analysis(
     resolutions: List[int],
     obstacle_type: str,
     solver_type: str,
-    Re: int,
+    Re: float,
     refinement_conforming: int,
     R_penalty: float = 1000.0,
     t_final: float = 20.0
@@ -150,7 +150,7 @@ def run_convergence_analysis(
 
     if not os.path.exists(conf_vel_file):
         print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming})...")
-        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, unsteady=(Re == 80))
+        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
         conf_solver.conforming_solve()
         conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
         conf_vel_file = get_field_filepath(conf_dir, "velocity", t_final)
@@ -175,11 +175,11 @@ def run_convergence_analysis(
 
         # 1. Run specified solver
         if solver_type.lower() == "brinkman":
-            solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, unsteady=(Re == 80))
+            solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
             solver.Brinkman_solve()
             case_name = "Brinkman"
         elif solver_type.lower() in ("dlm", "ns_dlm"):
-            solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, unsteady=(Re == 80))
+            solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
             solver.NS_DLM_Solve()
             case_name = "DLM"
         else:
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     resolutions = [50, 100, 150]         # Mesh refinement levels n to simulate
     obstacle_type = "square"             # "square" or "cylinder" (both stationary/fixed)
     solver_type = "Brinkman"             # "Brinkman" or "dlm"
-    Re = 40                              # Reynolds number (40 -> steady, 80 -> unsteady)
+    Re = 40.0                            # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
     refinement_conforming = 200          # Exact conforming reference mesh refinement
     R_penalty = 1000.0                   # Resistive parameter R (for Brinkman solver)
     t_final = 20.0                       # Final simulation time step t_final

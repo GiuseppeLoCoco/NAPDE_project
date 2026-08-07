@@ -17,16 +17,16 @@ from post_processing import save_VTK, save_checkpoint, plot_results, create_outp
 
 class Brinkman_solver:
 
-    def __init__(self, moving=False, type_obstacle="square", n=None, R=None, unsteady=False):
+    def __init__(self, moving=False, type_obstacle="square", n=None, R=None, Re=None):
 
         self.moving = moving
-        self.symmetric = True
-        self.unsteady = unsteady
         self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
         self.R = R if R is not None else getattr(user_parameters, 'R', 1000.0)
+        self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
     def Brinkman_solve(self, args=None):
 
@@ -75,10 +75,7 @@ class Brinkman_solver:
         dt = T_end / num_steps  # Time step size
         
         # Reynolds number
-        if self.unsteady:
-            Re = 80
-        else:
-            Re = 40
+        Re = self.Re
 
         # Density   
         rho = 1.0  
@@ -161,7 +158,6 @@ class Brinkman_solver:
         params = {
             'moving': self.moving,
             'obstacle': self.type_obstacle,
-            'unsteady': self.unsteady,
             'symmetric': self.symmetric,
             'n': self.n,
             'R': R,

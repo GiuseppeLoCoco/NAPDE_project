@@ -16,15 +16,15 @@ from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, line
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
-    def __init__(self, moving=False, type_obstacle="square", n=None, unsteady=False):
+    def __init__(self, moving=False, type_obstacle="square", n=None, Re=None):
 
         self.moving = moving
-        self.symmetric = True
-        self.unsteady = unsteady
         self.instationary = True
         # self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n_conforming
+        self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
     def conforming_solve(self, args=None):
 
@@ -53,10 +53,7 @@ class Conforming_solver:
         dt = T_end / num_steps   # time step size
 
         # Reynolds number
-        if self.unsteady:
-            Re = 80
-        else:
-            Re = 40
+        Re = self.Re
 
         # Density   
         rho = 1.0  
@@ -121,7 +118,6 @@ class Conforming_solver:
         params = {
             'moving': self.moving,
             'obstacle': self.type_obstacle,
-            'unsteady': self.unsteady,
             'symmetric': self.symmetric, 
             'n': self.n,
             'Re': Re,

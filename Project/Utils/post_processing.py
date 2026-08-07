@@ -121,16 +121,10 @@ def create_output_folders(solver_name, params, extra_fields=None):
     else:
         path_parts.append('fixed')
 
-    path_parts.append(f"{params.get('obstacle')}")
-
-    if params.get('unsteady'):
-        path_parts.append('unsteady')
-        if params.get('symmetric'):
-            path_parts.append('symmetric')
-        else:
-            path_parts.append('asymmetric')
+    if params.get('symmetric') is False:
+        path_parts.append('asymmetric')
     else:
-        path_parts.append('steady')
+        path_parts.append('symmetric')
 
     param_string = f"n{params.get('n', 'N')}"
     if 'R' in params:
