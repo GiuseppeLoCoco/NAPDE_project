@@ -32,8 +32,6 @@ class NS_DLM_Solver:
     def __init__(self, type_obstacle, moving):  
 
         self.moving = moving 
-        self.unsteady = False
-        self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
 
@@ -90,10 +88,7 @@ class NS_DLM_Solver:
         dt = T_end / num_steps   # time step size
 
         # Reynolds number
-        if self.unsteady:
-            Re = 80
-        else:
-            Re = 40
+        Re = 40
 
         # Density   
         rho = 1.0  
@@ -109,11 +104,6 @@ class NS_DLM_Solver:
 
         print(f"\nCharacteristic length L_char = {L_char}")
         print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
-
-        if self.unsteady:
-            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
-        else:
-            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
@@ -237,9 +227,8 @@ class NS_DLM_Solver:
         params = {
             'moving': self.moving,
             'obstacle': self.type_obstacle,
-            'unsteady': self.unsteady,
             'symmetric': self.symmetric, 
-            'n': n,
+            'n': self.n,
             'Re': Re,
         }
         basedir, file_dict = create_output_folders('DLM', params)

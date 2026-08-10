@@ -12,14 +12,15 @@ from user_inputs import *
 import user_inputs.user_parameters as user_parameters
 from math import cos, pi as PI, sin # Keep for local math.cos, math.sin usage
 
-from obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
+from domain_settings.boundary_conditions import create_bcs_conforming, time_varying_bc, t_param
+from domain_settings.obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
+from domain_settings.mesh_settings import conforming_mesh
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
 class Conforming_solver:
     def __init__(self, moving=False, type_obstacle="square", n=None, Re=None):
 
         self.moving = moving
-        self.instationary = True
         # self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n_conforming
@@ -69,11 +70,6 @@ class Conforming_solver:
 
         print(f"\nCharacteristic length L_char = {L_char}")
         print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
-
-        if self.unsteady:
-            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
-        else:
-            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)

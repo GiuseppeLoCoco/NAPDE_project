@@ -20,7 +20,6 @@ class Brinkman_solver:
     def __init__(self, moving=False, type_obstacle="square", n=None, R=None, Re=None):
 
         self.moving = moving
-        self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
@@ -91,11 +90,6 @@ class Brinkman_solver:
 
         print(f"\nCharacteristic length L_char = {L_char}")
         print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
-
-        if self.unsteady:
-            print(f"\nReynolds number Re = {Re} --> Unsteady Regime\n")
-        else:
-            print(f"\nReynolds number Re = {Re} --> Steady Regime\n")
 
         f  = Constant((0, 0))
         t = Constant(0.0)

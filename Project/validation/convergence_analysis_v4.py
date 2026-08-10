@@ -240,32 +240,80 @@ def run_convergence_analysis(
     print("=" * 70 + "\n")
 
     # -------------------------------------------------------------------------
-    # STEP 4: LOG-LOG CONVERGENCE PLOT
+    # STEP 4: LOG-LOG CONVERGENCE PLOT AND SUMMARY TABLE IMAGE
     # -------------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.loglog(dx_h, err_L2_u, 'o-', color='#2c7bb6', linewidth=2, markersize=8, label='$L^2$ Velocity Error')
-    ax.loglog(dx_h, err_H1_u, 's-', color='#d7191c', linewidth=2, markersize=8, label='$H^1$ Velocity Error')
-    if not any(math.isnan(e) for e in err_L2_p):
-        ax.loglog(dx_h, err_L2_p, '^--', color='#2b83ba', linewidth=1.8, markersize=7, label='$L^2$ Pressure Error')
+    case_name = "Brinkman" if solver_type.lower() == "brinkman" else "DLM"
+    out_dir = os.path.join(project_dir, "Plots", case_name)
+    os.makedirs(out_dir, exist_ok=True)
+    plot_filename = os.path.join(out_dir, f"convergence_loglog_{case_name}_{obstacle_type}_Re{Re}.png")
 
-    # Reference slope O(h) and O(h^2)
+    fig, (ax_plot, ax_table) = plt.subplots(1, 2, figsize=(15, 6.5), gridspec_kw={'width_ratios': [1.25, 1]})
+
+    # 1. Log-Log Error Curves Plot
+    ax_plot.loglog(dx_h, err_L2_u, 'o-', color='#2c7bb6', linewidth=2, markersize=8, label='$L^2$ Velocity Error')
+    ax_plot.loglog(dx_h, err_H1_u, 's-', color='#d7191c', linewidth=2, markersize=8, label='$H^1$ Velocity Error')
+    if not any(math.isnan(e) for e in err_L2_p):
+        ax_plot.loglog(dx_h, err_L2_p, '^--', color='#2b83ba', linewidth=1.8, markersize=7, label='$L^2$ Pressure Error')
+
+    # Reference slopes O(h) and O(h^2)
     h_arr = np.array(dx_h)
     ref_scale_1 = err_L2_u[0] / h_arr[0]
     ref_scale_2 = err_L2_u[0] / (h_arr[0] ** 2)
-    ax.loglog(h_arr, ref_scale_1 * h_arr, 'k--', alpha=0.6, label='$O(h)$')
-    ax.loglog(h_arr, ref_scale_2 * (h_arr ** 2), 'k:', alpha=0.6, label='$O(h^2)$')
+    ax_plot.loglog(h_arr, ref_scale_1 * h_arr, 'k--', alpha=0.6, label='$O(h)$')
+    ax_plot.loglog(h_arr, ref_scale_2 * (h_arr ** 2), 'k:', alpha=0.6, label='$O(h^2)$')
 
-    ax.set_xlabel("Mesh size $h = 1/n$", fontsize=12)
-    ax.set_ylabel("Error Norm (at $t = T_{final}$)", fontsize=12)
-    ax.set_title(f"Spatial Convergence — {solver_type.upper()} ({obstacle_type}, Re={Re})", fontsize=13, fontweight='bold')
-    ax.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax.legend(fontsize=10, framealpha=0.9)
+    ax_plot.set_xlabel("Mesh size $h = 1/n$", fontsize=12)
+    ax_plot.set_ylabel("Error Norm (at $t = T_{final}$)", fontsize=12)
+    ax_plot.set_title(f"Spatial Convergence — {case_name} ({obstacle_type.capitalize()}, Re={Re})", fontsize=13, fontweight='bold')
+    ax_plot.grid(True, which="both", linestyle="--", alpha=0.5)
+    ax_plot.legend(fontsize=10, framealpha=0.9)
+
+    # 2. Convergence Summary Tables
+    ax_table.axis('off')
+    ax_table.text(0.5, 0.98, f"Convergence Analysis Summary\n({case_name}, {obstacle_type.capitalize()}, Re={Re})",
+                  fontsize=12, fontweight='bold', ha='center', va='top', transform=ax_table.transAxes)
+
+    # Error Table
+    err_headers = ['n', 'h', 'L²(u) Error', 'H¹(u) Error', 'L²(p) Error']
+    err_rows = []
+    for i, n_val in enumerate(resolutions):
+        p_str = f"{err_L2_p[i]:.3e}" if not math.isnan(err_L2_p[i]) else "N/A"
+        err_rows.append([f"{n_val}", f"{dx_h[i]:.4f}", f"{err_L2_u[i]:.3e}", f"{err_H1_u[i]:.3e}", p_str])
+
+    table_err = ax_table.table(cellText=err_rows, colLabels=err_headers, loc='top', cellLoc='center', bbox=[0.0, 0.52, 1.0, 0.38])
+    table_err.auto_set_font_size(False)
+    table_err.set_fontsize(9)
+
+    for (row, col), cell in table_err.get_celld().items():
+        if row == 0:
+            cell.set_facecolor('#2c7bb6')
+            cell.set_text_props(color='white', fontweight='bold')
+        elif row % 2 == 0:
+            cell.set_facecolor('#f7f7f7')
+
+    # Rates Table
+    rate_headers = ['Interval (n)', 'Rate L²(u)', 'Rate H¹(u)', 'Rate L²(p)']
+    rate_rows = []
+    for i in range(len(resolutions) - 1):
+        n1, n2 = resolutions[i], resolutions[i + 1]
+        p_rate_str = f"{rates_L2_p[i]:+.3f}" if not math.isnan(rates_L2_p[i]) else "N/A"
+        rate_rows.append([f"{n1} → {n2}", f"{rates_L2_u[i]:+.3f}", f"{rates_H1_u[i]:+.3f}", p_rate_str])
+
+    table_rate = ax_table.table(cellText=rate_rows, colLabels=rate_headers, loc='bottom', cellLoc='center', bbox=[0.0, 0.05, 1.0, 0.35])
+    table_rate.auto_set_font_size(False)
+    table_rate.set_fontsize(9)
+
+    for (row, col), cell in table_rate.get_celld().items():
+        if row == 0:
+            cell.set_facecolor('#d7191c')
+            cell.set_text_props(color='white', fontweight='bold')
+        elif row % 2 == 0:
+            cell.set_facecolor('#f7f7f7')
 
     plt.tight_layout()
-    plot_filename = f"convergence_loglog_{solver_type}_{obstacle_type}_Re{Re}.png"
-    plt.savefig(plot_filename, dpi=300)
-    print(f">> Convergence plot saved to: {plot_filename}")
-    plt.show()
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    print(f">> Convergence plot & table saved to: {plot_filename}")
+    plt.close(fig)
 
 
 # =============================================================================
@@ -276,12 +324,12 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [50, 100, 150]         # Mesh refinement levels n to simulate
+    resolutions = [50, 75, 100,125, 150]         # Mesh refinement levels n to simulate
     obstacle_type = "square"             # "square" or "cylinder" (both stationary/fixed)
-    solver_type = "Brinkman"             # "Brinkman" or "dlm"
+    solver_type = "dlm"             # "Brinkman" or "dlm"
     Re = 40.0                            # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
     refinement_conforming = 200          # Exact conforming reference mesh refinement
-    R_penalty = 1000.0                   # Resistive parameter R (for Brinkman solver)
+    R_penalty = 100000.0                   # Resistive parameter R (for Brinkman solver)
     t_final = 20.0                       # Final simulation time step t_final
     # =========================================================================
 

@@ -121,6 +121,9 @@ def create_output_folders(solver_name, params, extra_fields=None):
     else:
         path_parts.append('fixed')
 
+    if params.get('obstacle'):
+        path_parts.append(str(params.get('obstacle')))
+
     if params.get('symmetric') is False:
         path_parts.append('asymmetric')
     else:

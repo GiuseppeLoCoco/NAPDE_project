@@ -7,6 +7,7 @@ from time import time, perf_counter
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Utils')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'domain_settings')))
+from domain_settings import *
 from user_inputs import *
 import user_inputs.user_parameters as user_parameters
 import math
@@ -32,7 +33,6 @@ class NS_DLM_Solver:
     def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
-        self.instationary = True
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
@@ -109,11 +109,6 @@ class NS_DLM_Solver:
 
         print("\nCharacteristic length L_char = {}".format(L_char))
         print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
-
-        if self.unsteady == True:
-            print("\nReynolds number Re = {} --> Unsteady Regime\n", format(Re))
-        else:
-            print("\nReynolds number Re = {} --> Steady Regime\n", format(Re))
 
         f = Constant((0.0, 0.0))
         t = Constant(0.0)
@@ -238,7 +233,7 @@ class NS_DLM_Solver:
             'moving': self.moving,
             'obstacle': self.type_obstacle,
             'symmetric': self.symmetric, 
-            'n': n,
+            'n': self.n,
             'Re': Re,
         }
         basedir, file_dict = create_output_folders('DLM', params)
