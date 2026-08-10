@@ -27,7 +27,7 @@ class Brinkman_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def Brinkman_solve(self, args=None):
+    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -69,9 +69,9 @@ class Brinkman_solver:
 
         tol = 1e-10
 
-        T_end = 20.0            # Final time
-        num_steps = 40          # Number of time steps
-        dt = T_end / num_steps  # Time step size
+        T_end = float(t_final) if t_final is not None else 20.0
+        dt = 0.5
+        num_steps = max(1, int(round(T_end / dt)))
         
         # Reynolds number
         Re = self.Re
@@ -91,7 +91,9 @@ class Brinkman_solver:
         print(f"\nCharacteristic length L_char = {L_char}")
         print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
 
-        f  = Constant((0, 0))
+        f = f_custom(mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0, 0)))
+        u_ex_val = u_exact(mesh) if callable(u_exact) else u_exact
+        p_ex_val = p_exact(mesh) if callable(p_exact) else p_exact
         t = Constant(0.0)
 
         R = self.R
@@ -112,7 +114,17 @@ class Brinkman_solver:
         W = V * Q
 
         # Define boundary conditions
-        bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
+        if u_ex_val is not None:
+            bcs = [
+                DirichletBC(W.sub(0), u_ex_val, 1),
+                DirichletBC(W.sub(0), u_ex_val, 2),
+                DirichletBC(W.sub(0), u_ex_val, 3),
+                DirichletBC(W.sub(0), u_ex_val, 4)
+            ]
+            if p_ex_val is not None:
+                bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
+        else:
+            bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
@@ -126,7 +138,7 @@ class Brinkman_solver:
         # Define expressions for Brinkman
         phi_expr = self.obstacle.distExpr(mesh, t)
         chi_expr = self.obstacle.chi(mesh, t)
-        us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        us_expr = u_ex_val if u_ex_val is not None else as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
 
         w = Constant((0.0, 0.0))
 
@@ -156,6 +168,7 @@ class Brinkman_solver:
             'n': self.n,
             'R': R,
             'Re': Re,
+            'is_mms': (u_exact is not None),
         }
         basedir, file_dict = create_output_folders('Brinkman', params, extra_fields=['phi', 'chi'])
 

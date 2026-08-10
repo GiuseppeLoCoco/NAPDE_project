@@ -113,7 +113,10 @@ def create_output_folders(solver_name, params, extra_fields=None):
     
     # Costruisce un percorso robusto partendo dalla directory del progetto (Project/)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    base_plot_dir = os.path.join(project_root, 'Plots', solver_name)
+    if params.get('is_mms'):
+        base_plot_dir = os.path.join(project_root, 'Plots', 'MMS', solver_name)
+    else:
+        base_plot_dir = os.path.join(project_root, 'Plots', solver_name)
     path_parts = [base_plot_dir]
 
     if params.get('moving'):

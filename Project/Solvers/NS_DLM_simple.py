@@ -74,7 +74,7 @@ class NS_DLM_Solver:
             raise ValueError(f"Tipo di ostacolo non supportato: {self.type_obstacle}")
 
 
-    def NS_DLM_Solve(self, args=None):
+    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
 
         # Start the timer for the simulation
         timer_total.start()
@@ -88,9 +88,9 @@ class NS_DLM_Solver:
         # ==================================
 
         tol = 1e-10
-        T_end = 20.0             # final time
-        num_steps = 40           # number of time steps
-        dt = T_end / num_steps   # time step size
+        T_end = float(t_final) if t_final is not None else 20.0
+        dt = 0.5
+        num_steps = max(1, int(round(T_end / dt)))
 
         # Reynolds number
         Re = self.Re
@@ -110,7 +110,9 @@ class NS_DLM_Solver:
         print("\nCharacteristic length L_char = {}".format(L_char))
         print("\nReynolds number Re = {} computed with u_characteristic = {}\n".format(Re, u_char))
 
-        f = Constant((0.0, 0.0))
+        f = f_custom(fluid_mesh.mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0.0, 0.0)))
+        u_ex_val = u_exact(fluid_mesh.mesh) if callable(u_exact) else u_exact
+        p_ex_val = p_exact(fluid_mesh.mesh) if callable(p_exact) else p_exact
         t = Constant(0.0)
 
         # Create the solid mesh based on the obstacle type
@@ -184,9 +186,24 @@ class NS_DLM_Solver:
 
         # Create boundary conditions dictionary and setup
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
-        bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
-
-        bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
+        if u_ex_val is not None:
+            bcs = [
+                DirichletBC(FS['fluid'][0], u_ex_val, 1),
+                DirichletBC(FS['fluid'][0], u_ex_val, 2),
+                DirichletBC(FS['fluid'][0], u_ex_val, 3),
+                DirichletBC(FS['fluid'][0], u_ex_val, 4)
+            ]
+            if p_ex_val is not None:
+                bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, 2))
+            bcs_correction = [
+                DirichletBC(V, u_ex_val, 1),
+                DirichletBC(V, u_ex_val, 2),
+                DirichletBC(V, u_ex_val, 3),
+                DirichletBC(V, u_ex_val, 4)
+            ]
+        else:
+            bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
+            bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
 
         # ---------------------------------
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)
@@ -235,6 +252,7 @@ class NS_DLM_Solver:
             'symmetric': self.symmetric, 
             'n': self.n,
             'Re': Re,
+            'is_mms': (u_exact is not None),
         }
         basedir, file_dict = create_output_folders('DLM', params)
 

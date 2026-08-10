@@ -27,7 +27,7 @@ class Conforming_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def conforming_solve(self, args=None):
+    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -49,9 +49,9 @@ class Conforming_solver:
         mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n)
         
         tol = 1e-10
-        T_end = 20.0             # final time
-        num_steps = 40           # number of time steps
-        dt = T_end / num_steps   # time step size
+        T_end = float(t_final) if t_final is not None else 20.0
+        dt = 0.5
+        num_steps = max(1, int(round(T_end / dt)))
 
         # Reynolds number
         Re = self.Re
@@ -71,7 +71,9 @@ class Conforming_solver:
         print(f"\nCharacteristic length L_char = {L_char}")
         print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
 
-        f = Constant((0.0, 0.0))
+        f = f_custom(mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0.0, 0.0)))
+        u_ex_val = u_exact(mesh) if callable(u_exact) else u_exact
+        p_ex_val = p_exact(mesh) if callable(p_exact) else p_exact
         t = Constant(0.0)
 
         # --------------------------------
@@ -100,7 +102,18 @@ class Conforming_solver:
             w = Constant((0.0, 0.0))
 
         # Create boundary conditions using the dedicated function (t_param is updated via time_varying_bc)
-        bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
+        if u_ex_val is not None:
+            bcs = [
+                DirichletBC(W.sub(0), u_ex_val, 1),
+                DirichletBC(W.sub(0), u_ex_val, 2),
+                DirichletBC(W.sub(0), u_ex_val, 3),
+                DirichletBC(W.sub(0), u_ex_val, 4),
+                DirichletBC(W.sub(0), u_ex_val, 5)
+            ]
+            if p_ex_val is not None:
+                bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
+        else:
+            bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
@@ -117,6 +130,7 @@ class Conforming_solver:
             'symmetric': self.symmetric, 
             'n': self.n,
             'Re': Re,
+            'is_mms': (u_exact is not None),
         }
         basedir, file_dict = create_output_folders('Conforming', params)
 
