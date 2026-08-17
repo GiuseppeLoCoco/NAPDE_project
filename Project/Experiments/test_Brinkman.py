@@ -411,13 +411,13 @@ def run_experiment_pipeline(
 
 if __name__ == "__main__":
     run_experiment_pipeline(
-        resolutions=[75, 100, 125],    # Risoluzioni n (elementi per lato lungo di Omega_0)
+        resolutions=[75, 100, 125],     # Resolution
         Lx=4.0,
         Ly=1.0,
-        L_buf=1.0,                      # Lunghezza del buffer a monte Omega_buf
+        L_buf=1.0,                      # Length of the buffer region
         Re=40.0,
-        R_penalty=1.0e4,                # Resistenza idraulica Brinkman
-        T_end=5.0,                      # Tempo finale di simulazione
+        R_penalty=1.0e4,                # Brinkman penalty term
+        T_end=5.0,                      # Final time
         dt=0.5,
         output_dir="results_buffer_recovery"
     )
