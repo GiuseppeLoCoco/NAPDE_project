@@ -39,39 +39,39 @@ class NS_DLM_Solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-        # Inizializza l'ostacolo e imposta le proprietà in base al suo tipo
+        # Initialize the obstacle based on the type chosen
         if self.type_obstacle == "cylinder":
-            print("\nObstacolo: Cilindro")
+            print("\nObstacle: Cylinder")
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
             if x_obs == y_obs:
-                print("Configurazione simmetrica: cilindro centrato nel canale")
+                print("Symmetric Configuration: cylinder centered in the channel")
                 self.symmetric = True
             else:
-                print("Configurazione asimmetrica: cilindro spostato più in alto nel canale")
+                print("Asymmetric Configuration: cylinder shifted upward in the channel")
                 self.symmetric = False
         elif self.type_obstacle == "square":
-            print("\nObstacolo: Quadrato")
+            print("\nObstacle: Square")
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-            self.moving = False  # L'ostacolo quadrato è tipicamente fisso nel contesto DLM
-            if x_obs == y_obs: # Assumendo che il centro del quadrato sia x_obs, y_obs
-                print("Configurazione simmetrica: quadrato centrato nel canale")
+            self.moving = False  # The square obstacle is typically fixed in the DLM context
+            if x_obs == y_obs: # Assuming the center of the square is at x_obs, y_obs
+                print("Symmetric Configuration: square centered in the channel")
                 self.symmetric = True
             else:
-                print("Configurazione asimmetrica: quadrato spostato più in alto nel canale")
+                print("Asymmetric Configuration: square shifted upward in the channel")
                 self.symmetric = False
         elif self.type_obstacle == "line":
-            print("\nObstacolo: Linea")
-            # Ordine corretto degli argomenti per lineObstacle
+            print("\nObstacle: Line")
+            # Correct order of arguments for lineObstacle
             self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
-            self.moving = False  # Ostacolo linea fisso
-            self.symmetric = False # Gli ostacoli linea non sono generalmente simmetrici in questo contesto
+            self.moving = False  # Fixed line obstacle
+            self.symmetric = False # Line obstacles are generally not symmetric in this context
         elif self.type_obstacle == "rotating_line":
-            print("\nObstacolo: Linea Rotante")
-            # Ordine corretto degli argomenti per rotatingLineObstacle
+            print("\nObstacle: Rotating Line")
+            # Correct order of arguments for rotatingLineObstacle
             self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
-            self.symmetric = False # Gli ostacoli linea rotanti non sono generalmente simmetrici
+            self.symmetric = False # Line obstacles are generally not symmetric in this context
         else:
-            raise ValueError(f"Tipo di ostacolo non supportato: {self.type_obstacle}")
+            raise ValueError(f"Type of obstacle not supported: {self.type_obstacle}")
 
 
     def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
