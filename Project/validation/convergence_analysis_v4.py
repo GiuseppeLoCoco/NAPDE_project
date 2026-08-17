@@ -14,7 +14,7 @@ import os
 import sys
 import math
 import warnings
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,6 +27,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(current_dir)
 if project_dir not in sys.path:
     sys.path.append(project_dir)
+
+"""
+for p in [project_dir, os.path.join(project_dir, "domain_settings"), 
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+"""
 
 from domain_settings.obstacles import circleObstacle, squareObstacle
 from user_inputs.user_parameters import x_obs, y_obs, r_obs, side_length, Lx, Ly
@@ -107,6 +114,27 @@ def compute_fluid_error_pressure(p_ex, p_h, obstacle_instance, t_val: float) -> 
     return sqrt(err_p_L2_sq)
 
 
+def extract_vertical_profile(u_field, x_eval: float, Ly_val: float, num_points: int = 250) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extracts velocity magnitude profile along a vertical line at x = x_eval.
+    If a point falls inside a conforming mesh void, it defaults to 0.0 (no-slip rigid velocity).
+    """
+    y_coords = np.linspace(1e-5, Ly_val - 1e-5, num_points)
+    u_mag = np.zeros_like(y_coords)
+
+    for i, y in enumerate(y_coords):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                val = u_field.at([x_eval, y], tolerance=1e-6)
+            u_mag[i] = math.sqrt(val[0]**2 + val[1]**2)
+        except Exception:
+            # Point is inside the void of a conforming mesh
+            u_mag[i] = 0.0
+
+    return y_coords, u_mag
+
+
 # =============================================================================
 # 3. MAIN SIMULATION & CONVERGENCE LOOP
 # =============================================================================
@@ -161,14 +189,22 @@ def run_convergence_analysis(
     u_ex = load_hdf5_solution(conf_vel_file, "velocity")
     p_ex = load_hdf5_solution(conf_pres_file, "pressure") if os.path.exists(conf_pres_file) else None
 
+    # Reference vertical profile
+    y_ref, u_mag_ref = extract_vertical_profile(u_ex, x_obs, Ly)
+
     # -------------------------------------------------------------------------
     # STEP 2: LOOP FOR EACH RESOLUTION n (SIMULATION + ERROR CALCULATION)
     # -------------------------------------------------------------------------
     err_L2_u = []
     err_H1_u = []
     err_L2_p = []
+    profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    R_values_used: Dict[int, float] = {}
+
+    n_min = min(resolutions)
 
     for n in resolutions:
+
         print("\n" + "-" * 60)
         print(f" Running {solver_type} simulation for resolution n = {n} ...")
         print("-" * 60)
@@ -205,6 +241,9 @@ def run_convergence_analysis(
         else:
             err_L2_p.append(float('nan'))
 
+        # 4. Vertical profile extraction
+        profiles[n] = extract_vertical_profile(u_h, x_obs, Ly)
+
         print(f"   --> n={n:3d} | Error L2(u) = {e_L2_u:.5e} | Error H1(u) = {e_H1_u:.5e} | Error L2(p) = {err_L2_p[-1]:.5e}")
 
     # -------------------------------------------------------------------------
@@ -228,6 +267,7 @@ def run_convergence_analysis(
     print(f"{'n':>6} | {'h':>10} | {'L2 Velocity Err':>16} | {'H1 Velocity Err':>16} | {'L2 Pressure Err':>16}")
     print("-" * 70)
     for i, n in enumerate(resolutions):
+        p_str = f"{err_L2_p[i]:14.5e}" if not math.isnan(err_L2_p[i]) else "           N/A"
         print(f"{n:6d} | {dx_h[i]:10.5f} | {err_L2_u[i]:16.5e} | {err_H1_u[i]:16.5e} | {err_L2_p[i]:16.5e}")
     print("-" * 70)
 
@@ -268,7 +308,24 @@ def run_convergence_analysis(
     ax_plot.grid(True, which="both", linestyle="--", alpha=0.5)
     ax_plot.legend(fontsize=10, framealpha=0.9)
 
-    # 2. Convergence Summary Tables
+    # 2. Vertical Velocity Profile
+    fig = plt.figure(figsize=(18, 5.5))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.1, 1.1])
+    ax_prof = fig.add_subplot(gs[0, 1])
+    ax_prof.plot(u_mag_ref, y_ref, 'k-', lw=2.2, label='Conforming (ref.)', zorder=5)
+
+    colors = plt.cm.viridis(np.linspace(0.2, 0.85, len(resolutions)))
+    for (n, color) in zip(resolutions, colors):
+        y_p, u_p = profiles[n]
+        ax_prof.plot(u_p, y_p, '--', color=color, lw=1.5, label=f'n = {n}')
+
+    ax_prof.set_xlabel("$\\|\\mathbf{u}\\|$ [m/s]", fontsize=11)
+    ax_prof.set_ylabel("$y$ [m]", fontsize=11)
+    ax_prof.set_title(f"Centerline Profile ($x = {x_obs:.2f}, t = T$)", fontsize=12, fontweight='bold')
+    ax_prof.grid(True, ls="--", alpha=0.5)
+    ax_prof.legend(fontsize=9, loc='upper right')
+
+    # 3. Convergence Summary Tables
     ax_table.axis('off')
     ax_table.text(0.5, 0.98, f"Convergence Analysis Summary\n({case_name}, {obstacle_type.capitalize()}, Re={Re})",
                   fontsize=12, fontweight='bold', ha='center', va='top', transform=ax_table.transAxes)
