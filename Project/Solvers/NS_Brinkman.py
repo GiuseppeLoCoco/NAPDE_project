@@ -27,7 +27,7 @@ class Brinkman_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
+    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -94,6 +94,7 @@ class Brinkman_solver:
         f = f_custom(mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0, 0)))
         u_ex_val = u_exact(mesh) if callable(u_exact) else u_exact
         p_ex_val = p_exact(mesh) if callable(p_exact) else p_exact
+        g_ex_val = g_custom(mesh) if callable(g_custom) else g_custom
         t = Constant(0.0)
 
         R = self.R
@@ -117,11 +118,10 @@ class Brinkman_solver:
         if u_ex_val is not None:
             bcs = [
                 DirichletBC(W.sub(0), u_ex_val, 1),
-                DirichletBC(W.sub(0), u_ex_val, 2),
                 DirichletBC(W.sub(0), u_ex_val, 3),
                 DirichletBC(W.sub(0), u_ex_val, 4)
             ]
-            if p_ex_val is not None:
+            if p_ex_val is not None and g_ex_val is None:
                 bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
         else:
             bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
@@ -156,6 +156,9 @@ class Brinkman_solver:
         L = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx \
               + inner(f, v)*dx \
               + Constant(R) * inner(us_expr, v)* chi_expr * dx
+        if g_ex_val is not None:
+            ds_b = Measure("ds", domain=mesh)
+            L += inner(g_ex_val, v)*ds_b(2)
 
 
         # =========================================
@@ -172,15 +175,39 @@ class Brinkman_solver:
         }
         basedir, file_dict = create_output_folders('Brinkman', params, extra_fields=['phi', 'chi'])
 
-        # Time-stepping
-        t_val = 0.0
-        uh_n.assign(0.0)
-
         DG1 = FunctionSpace(mesh, 'DG', 1)
         phiFun = Function(DG1)
         chiFun = Function(DG1)
         phiFun.interpolate(phi_expr)
         chiFun.interpolate(chi_expr)
+
+        if u_exact is not None:
+            # Steady-state non-linear solve via Newton's method for exact MMS validation
+            F_mms = Constant(rho)*inner(dot(uh, nabla_grad(uh)), v)*dx \
+                  + Constant(mu)*inner(sym(grad(uh)), sym(grad(v)))*dx \
+                  - div(v)*ph*dx + div(uh)*q*dx \
+                  + Constant(R) * inner(uh - us_expr, v) * chi_expr * dx \
+                  - inner(f, v)*dx
+            if g_ex_val is not None:
+                ds_b = Measure("ds", domain=mesh)
+                F_mms -= inner(g_ex_val, v)*ds_b(2)
+
+            solve(F_mms == 0, sol, bcs=bcs, solver_parameters={
+                'snes_type': 'newtonls',
+                'snes_rtol': 1e-8,
+                'ksp_type': 'preonly',
+                'pc_type': 'lu',
+                'pc_factor_mat_solver_type': 'mumps'
+            })
+            save_VTK(file_dict, T_end, uh, ph, phi=phiFun, chi=chiFun)
+            save_checkpoint(basedir, T_end, mesh, self.moving, velocity=uh, pressure=ph, phi=phiFun, chi=chiFun)
+            wall_time = time() - t_start
+            print(f"Total wall time = {wall_time} seconds\n", flush=True)
+            return
+
+        # Time-stepping
+        t_val = 0.0
+        uh_n.assign(0.0)
 
         save_VTK(file_dict, t_val, uh, ph, phi=phiFun, chi=chiFun)
         

@@ -70,10 +70,15 @@ def get_mms_exact_fields(mesh):
 
     # Manufactured forcing term for steady Navier-Stokes momentum equation:
     # f_mms = rho * (u_exact . grad) u_exact - div(2 * mu * sym(grad(u_exact))) + grad(p_exact)
-    from firedrake import sym
+    from firedrake import sym, Identity, FacetNormal
     f_mms = rho * dot(u_exact, nabla_grad(u_exact)) - div(2.0 * mu * sym(grad(u_exact))) + grad(p_exact)
 
-    return u_exact, p_exact, f_mms
+    # Exact Neumann traction flux at outflow boundary: g_neumann = (2*mu*sym(grad(u_exact)) - p_exact*I) . n
+    n_vec = FacetNormal(mesh)
+    sigma_exact = 2.0 * mu * sym(grad(u_exact)) - p_exact * Identity(2)
+    g_neumann = dot(sigma_exact, n_vec)
+
+    return u_exact, p_exact, f_mms, g_neumann
 
 
 def get_case_directory(solver_name: str, obstacle: str, Re: float, n: int, R_penalty: float = 100000.0) -> str:
@@ -152,21 +157,22 @@ def run_mms_convergence(
         u_exact_func = lambda m: get_mms_exact_fields(m)[0]
         p_exact_func = lambda m: get_mms_exact_fields(m)[1]
         f_mms_func = lambda m: get_mms_exact_fields(m)[2]
+        g_neumann_func = lambda m: get_mms_exact_fields(m)[3]
 
         if solver_type.lower() == "conforming":
             solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.conforming_solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, t_final=t_final)
+            solver.conforming_solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
             case_dir = get_case_directory("Conforming", obstacle_type, Re, n)
 
         elif solver_type.lower() == "brinkman":
             R_val = R_penalty * ((n / float(n_min)) ** 2) if scale_R else R_penalty
             solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_val, Re=Re)
-            solver.Brinkman_solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, t_final=t_final)
+            solver.Brinkman_solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
             case_dir = get_case_directory("Brinkman", obstacle_type, Re, n, R_val)
 
         elif solver_type.lower() in ("dlm", "ns_dlm"):
             solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.NS_DLM_Solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, t_final=t_final)
+            solver.NS_DLM_Solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
             case_dir = get_case_directory("DLM", obstacle_type, Re, n)
 
         else:

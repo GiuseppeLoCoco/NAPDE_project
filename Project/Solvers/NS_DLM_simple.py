@@ -74,7 +74,7 @@ class NS_DLM_Solver:
             raise ValueError(f"Tipo di ostacolo non supportato: {self.type_obstacle}")
 
 
-    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, t_final=None):
+    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, t_final=None):
 
         # Start the timer for the simulation
         timer_total.start()
@@ -113,6 +113,7 @@ class NS_DLM_Solver:
         f = f_custom(fluid_mesh.mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0.0, 0.0)))
         u_ex_val = u_exact(fluid_mesh.mesh) if callable(u_exact) else u_exact
         p_ex_val = p_exact(fluid_mesh.mesh) if callable(p_exact) else p_exact
+        g_ex_val = g_custom(fluid_mesh.mesh) if callable(g_custom) else g_custom
         t = Constant(0.0)
 
         # Create the solid mesh based on the obstacle type
@@ -189,18 +190,19 @@ class NS_DLM_Solver:
         if u_ex_val is not None:
             bcs = [
                 DirichletBC(FS['fluid'][0], u_ex_val, 1),
-                DirichletBC(FS['fluid'][0], u_ex_val, 2),
                 DirichletBC(FS['fluid'][0], u_ex_val, 3),
                 DirichletBC(FS['fluid'][0], u_ex_val, 4)
             ]
-            if p_ex_val is not None:
+            if p_ex_val is not None and g_ex_val is None:
                 bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, 2))
             bcs_correction = [
                 DirichletBC(V, u_ex_val, 1),
-                DirichletBC(V, u_ex_val, 2),
                 DirichletBC(V, u_ex_val, 3),
                 DirichletBC(V, u_ex_val, 4)
             ]
+            if g_ex_val is None:
+                bcs.insert(1, DirichletBC(FS['fluid'][0], u_ex_val, 2))
+                bcs_correction.insert(1, DirichletBC(V, u_ex_val, 2))
         else:
             bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
             bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
@@ -227,6 +229,9 @@ class NS_DLM_Solver:
         L1 = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx_fluid \
             + inner(f, v)*dx_fluid \
             - inner(Lm_f, v)*dx_fluid
+        if g_ex_val is not None:
+            ds_b = Measure("ds", domain=fluid_mesh.mesh)
+            L1 += inner(g_ex_val, v)*ds_b(2)
         
 
         # ------- Step 2: Lagrange multiplier (DLM-NS-S2) -------
@@ -256,6 +261,28 @@ class NS_DLM_Solver:
         }
         basedir, file_dict = create_output_folders('DLM', params)
 
+        if u_exact is not None:
+            # Steady-state non-linear solve via Newton's method for exact MMS validation
+            F_mms = Constant(rho)*inner(dot(u_star, nabla_grad(u_star)), v)*dx_fluid \
+                  + Constant(mu)*inner(sym(grad(u_star)), sym(grad(v)))*dx_fluid \
+                  - div(v)*ph*dx_fluid + div(u_star)*q*dx_fluid \
+                  - inner(f, v)*dx_fluid
+            if g_ex_val is not None:
+                ds_b = Measure("ds", domain=fluid_mesh.mesh)
+                F_mms -= inner(g_ex_val, v)*ds_b(2)
+
+            solve(F_mms == 0, sol_star, bcs=bcs, solver_parameters={
+                'snes_type': 'newtonls',
+                'snes_rtol': 1e-8,
+                'ksp_type': 'preonly',
+                'pc_type': 'lu',
+                'pc_factor_mat_solver_type': 'mumps'
+            })
+            save_VTK(file_dict, T_end, u_star, ph)
+            save_checkpoint(basedir, T_end, fluid_mesh.mesh, self.moving, velocity=u_star, pressure=ph)
+            timer_total.stop()
+            print("Total wall time = {} seconds\n".format(timer_total.elapsed_time), flush=True)
+            return
 
         # ----------------------------------
         # Time-stepping Loop
