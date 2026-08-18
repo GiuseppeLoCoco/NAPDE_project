@@ -233,5 +233,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Istanziamo la classe e chiamiamo il solver
-    solver = Brinkman_solver(moving=True)
+    solver = Brinkman_solver(moving=True, type_obstacle="square")
     solver.Brinkman_solve(args)
