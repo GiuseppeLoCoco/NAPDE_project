@@ -68,14 +68,14 @@ def get_mms_exact_fields(mesh):
     Re = 40.0
     mu = rho * L_char * u_char / Re
 
-    # Manufactured forcing term for steady Navier-Stokes momentum equation:
-    # f_mms = rho * (u_exact . grad) u_exact - div(2 * mu * sym(grad(u_exact))) + grad(p_exact)
+    # Manufactured forcing term for steady Navier-Stokes momentum equation matching solver's mu * sym(grad(u)) weak form:
+    # f_mms = rho * (u_exact . grad) u_exact - div(mu * sym(grad(u_exact))) + grad(p_exact)
     from firedrake import sym, Identity, FacetNormal
-    f_mms = rho * dot(u_exact, nabla_grad(u_exact)) - div(2.0 * mu * sym(grad(u_exact))) + grad(p_exact)
+    f_mms = rho * dot(u_exact, nabla_grad(u_exact)) - div(mu * sym(grad(u_exact))) + grad(p_exact)
 
-    # Exact Neumann traction flux at outflow boundary: g_neumann = (2*mu*sym(grad(u_exact)) - p_exact*I) . n
+    # Exact Neumann traction flux at outflow boundary matching solver's weak form: g_neumann = (mu*sym(grad(u_exact)) - p_exact*I) . n
     n_vec = FacetNormal(mesh)
-    sigma_exact = 2.0 * mu * sym(grad(u_exact)) - p_exact * Identity(2)
+    sigma_exact = mu * sym(grad(u_exact)) - p_exact * Identity(2)
     g_neumann = dot(sigma_exact, n_vec)
 
     return u_exact, p_exact, f_mms, g_neumann
@@ -136,6 +136,7 @@ def run_mms_convergence(
     Re: float = 40.0,
     R_penalty: float = 100000.0,
     scale_R: bool = False,
+    dt: float = 0.5,
     t_final: float = 20.0
 ):
     dx_h = [1.0 / n for n in resolutions]
@@ -145,6 +146,7 @@ def run_mms_convergence(
     print(f" STARTING MMS VALIDATION FOR {solver_type.upper()} CLASS ({obstacle_type.upper()})")
     print(f" Refinements n: {resolutions}")
     print(f" Reynolds number Re: {Re}")
+    print(f" Time step dt: {dt}, t_final: {t_final}")
     if solver_type.lower() == "brinkman":
         print(f" Brinkman Resistance R: {R_penalty} (scaling with n: {scale_R})")
     print("=" * 70)
@@ -161,18 +163,18 @@ def run_mms_convergence(
 
         if solver_type.lower() == "conforming":
             solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.conforming_solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
+            solver.conforming_solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, g_custom=g_neumann_func, dt=dt, t_final=t_final)
             case_dir = get_case_directory("Conforming", obstacle_type, Re, n)
 
         elif solver_type.lower() == "brinkman":
             R_val = R_penalty * ((n / float(n_min)) ** 2) if scale_R else R_penalty
             solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_val, Re=Re)
-            solver.Brinkman_solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
+            solver.Brinkman_solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, g_custom=g_neumann_func, dt=dt, t_final=t_final)
             case_dir = get_case_directory("Brinkman", obstacle_type, Re, n, R_val)
 
         elif solver_type.lower() in ("dlm", "ns_dlm"):
             solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.NS_DLM_Solve(f_custom=f_mms_func, u_exact=u_exact_func, g_custom=g_neumann_func, t_final=t_final)
+            solver.NS_DLM_Solve(f_custom=f_mms_func, u_exact=u_exact_func, p_exact=p_exact_func, g_custom=g_neumann_func, dt=dt, t_final=t_final)
             case_dir = get_case_directory("DLM", obstacle_type, Re, n)
 
         else:
@@ -254,9 +256,10 @@ if __name__ == "__main__":
     solvers_to_test = ["brinkman"]                      # List of solvers to include in MMS study
     #solvers_to_test = ["conforming", "brinkman", "dlm"] # List of solvers to include in MMS study
     Re = 40.0                                           # Reynolds number
-    R_penalty = 100000.0                                # Resistive parameter R (for Brinkman solver)
+    R_penalty = 10000.0                                # Resistive parameter R (for Brinkman solver)
     scale_R = False                                     # Scale Brinkman resistance R(n) = R_0 * (n/n_min)^2
-    t_final = 10.0                                    # Final simulation time step t_final
+    dt = 0.05                                         # Time step dt for time integration
+    t_final = 5                                    # Final simulation time step t_final
     # =========================================================================
 
 
@@ -268,5 +271,6 @@ if __name__ == "__main__":
             Re=Re,
             R_penalty=R_penalty,
             scale_R=scale_R,
+            dt=dt,
             t_final=t_final
         )

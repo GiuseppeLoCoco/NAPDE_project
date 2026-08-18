@@ -27,7 +27,7 @@ class Conforming_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, t_final=None):
+    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -50,7 +50,7 @@ class Conforming_solver:
         
         tol = 1e-10
         T_end = float(t_final) if t_final is not None else 20.0
-        dt = 0.5
+        dt = float(dt) if dt is not None else 0.5
         num_steps = max(1, int(round(T_end / dt)))
 
         # Reynolds number
@@ -110,8 +110,6 @@ class Conforming_solver:
                 DirichletBC(W.sub(0), u_ex_val, 4),
                 DirichletBC(W.sub(0), u_ex_val, 5)
             ]
-            if p_ex_val is not None and g_ex_val is None:
-                bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
         else:
             bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
 
@@ -136,29 +134,6 @@ class Conforming_solver:
             'is_mms': (u_exact is not None),
         }
         basedir, file_dict = create_output_folders('Conforming', params)
-
-        if u_exact is not None:
-            # Steady-state non-linear solve via Newton's method for exact MMS validation
-            F_mms = Constant(rho)*inner(dot(uh, nabla_grad(uh)), v)*dx \
-                  + Constant(mu)*inner(sym(grad(uh)), sym(grad(v)))*dx \
-                  - div(v)*ph*dx + div(uh)*q*dx \
-                  - inner(f, v)*dx
-            if g_ex_val is not None:
-                ds_b = Measure("ds", domain=mesh)
-                F_mms -= inner(g_ex_val, v)*ds_b(2)
-
-            solve(F_mms == 0, sol, bcs=bcs, solver_parameters={
-                'snes_type': 'newtonls',
-                'snes_rtol': 1e-8,
-                'ksp_type': 'preonly',
-                'pc_type': 'lu',
-                'pc_factor_mat_solver_type': 'mumps'
-            })
-            save_VTK(file_dict, T_end, uh, ph)
-            save_checkpoint(basedir, T_end, mesh, self.moving, velocity=uh, pressure=ph)
-            wall_time = time() - t_start
-            print(f"Total wall time = {wall_time} seconds\n", flush=True)
-            return
 
         # Time-stepping
         t_val = 0.0
