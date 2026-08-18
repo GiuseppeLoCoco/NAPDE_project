@@ -48,34 +48,51 @@ from Solvers.NS_DLM_simple import NS_DLM_Solver
 # 1. MMS EXACT SOLUTION DEFINITION
 # =============================================================================
 
-def get_mms_exact_fields(mesh):
-    """Returns exact analytical u_exact, p_exact and manufactured body force f_mms."""
+try:
+    from firedrake import conditional as Conditional, conditional
+except ImportError:
+    from firedrake import conditional
+    Conditional = conditional
+from firedrake import sym, Identity, FacetNormal
+
+
+def get_mms_exact_fields(mesh, Re=40.0, Lx=Lx, Ly=Ly, x_obs=x_obs, y_obs=y_obs, side_length=side_length, rho=1.0, L_char=0.2, u_char=1.0):
+    """
+    Costruisce u_exact, p_exact, f_mms e g_neumann per la validazione MMS con ostacolo quadrato.
+    Garantisce:
+      - div(u_exact) = 0
+      - u_exact = 0 all'interno dell'ostacolo quadrato
+      - u_exact = 0 sulle pareti y = 0 e y = Ly (No-Slip)
+      - Flusso non nullo con u_y = 0 all'Inflow (x = 0)
+    """
     X = SpatialCoordinate(mesh)
     x, y = X[0], X[1]
 
-    # Exact incompressible velocity field with exact no-slip (u = 0) on top and bottom walls: div(u_exact) = 0
-    u_x = sin(pi * x / Lx) * sin(2.0 * pi * y / Ly)
-    u_y = (Ly / (2.0 * Lx)) * cos(pi * x / Lx) * (cos(2.0 * pi * y / Ly) - 1.0)
-    u_exact = as_vector([u_x, u_y])
+    # 1. Distanza geometrica dall'ostacolo quadrato
+    dx_val = conditional(abs(x - x_obs) - side_length / 2.0 > 0.0, abs(x - x_obs) - side_length / 2.0, 0.0)
+    dy_val = conditional(abs(y - y_obs) - side_length / 2.0 > 0.0, abs(y - y_obs) - side_length / 2.0, 0.0)
+    r = sqrt(dx_val**2 + dy_val**2)
 
-    # Exact pressure field
-    p_exact = sin(pi * x / Lx) * sin(pi * y / Ly)
+    # 2. Funzione di corrente psi (regolarita' C^3)
+    psi = (r**4) * (sin(pi * y / Ly)**2) * cos(pi * x / Lx)
 
-    # Physical parameters matching solver settings
-    rho = 1.0
-    u_char = 1.0
-    L_char = 0.2
-    Re = 40.0
+    # 3. Campo di velocita' esatto: u_x = d(psi)/dy, u_y = -d(psi)/dx
+    grad_psi = grad(psi)
+    u_exact = as_vector([grad_psi[1], -grad_psi[0]])
+
+    # 4. Pressione esatta
+    p_exact = (r**3) * cos(pi * x / Lx) * sin(pi * y / Ly)
+
+    # 5. Viscosita' dinamica coerente con i parametri dei solutori
     mu = rho * L_char * u_char / Re
 
-    # Manufactured forcing term for steady Navier-Stokes momentum equation matching solver's mu * sym(grad(u)) weak form:
-    # f_mms = rho * (u_exact . grad) u_exact - div(mu * sym(grad(u_exact))) + grad(p_exact)
-    from firedrake import sym, Identity, FacetNormal
+    # 6. Forzante MMS per il bilancio della quantita' di moto
     f_mms = rho * dot(u_exact, nabla_grad(u_exact)) - div(mu * sym(grad(u_exact))) + grad(p_exact)
 
-    # Exact Neumann traction flux at outflow boundary matching solver's weak form: g_neumann = (mu*sym(grad(u_exact)) - p_exact*I) . n
+    # 7. Flusso di trazione naturale di Neumann per l'uscita (x = Lx)
     n_vec = FacetNormal(mesh)
-    sigma_exact = mu * sym(grad(u_exact)) - p_exact * Identity(2)
+    dim = mesh.geometric_dimension()
+    sigma_exact = mu * sym(grad(u_exact)) - p_exact * Identity(dim)
     g_neumann = dot(sigma_exact, n_vec)
 
     return u_exact, p_exact, f_mms, g_neumann
@@ -156,10 +173,10 @@ def run_mms_convergence(
     for n in resolutions:
         print(f"\n>> Instantiating and running {solver_type} solver class for n = {n} ...")
 
-        u_exact_func = lambda m: get_mms_exact_fields(m)[0]
-        p_exact_func = lambda m: get_mms_exact_fields(m)[1]
-        f_mms_func = lambda m: get_mms_exact_fields(m)[2]
-        g_neumann_func = lambda m: get_mms_exact_fields(m)[3]
+        u_exact_func = lambda m: get_mms_exact_fields(m, Re=Re)[0]
+        p_exact_func = lambda m: get_mms_exact_fields(m, Re=Re)[1]
+        f_mms_func = lambda m: get_mms_exact_fields(m, Re=Re)[2]
+        g_neumann_func = lambda m: get_mms_exact_fields(m, Re=Re)[3]
 
         if solver_type.lower() == "conforming":
             solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
@@ -186,7 +203,7 @@ def run_mms_convergence(
 
         mesh_h, uh, ph = load_checkpoint_solutions(vel_file, pres_file)
 
-        u_ex, p_ex, _ = get_mms_exact_fields(mesh_h)
+        u_ex, p_ex, _, _ = get_mms_exact_fields(mesh_h, Re=Re)
 
         e_L2_u, e_H1_u, e_L2_p = compute_exact_errors(mesh_h, uh, ph, u_ex, p_ex)
         errs_L2_u.append(e_L2_u)
