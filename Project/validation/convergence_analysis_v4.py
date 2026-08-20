@@ -14,7 +14,7 @@ import os
 import sys
 import math
 import warnings
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -146,6 +146,7 @@ def run_convergence_analysis(
     Re: float,
     refinement_conforming: int,
     R_penalty: float = 1000.0,
+    dt: Optional[float] = None,
     t_final: float = 20.0
 ):
     """
@@ -165,6 +166,9 @@ def run_convergence_analysis(
     print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re})")
     print(f" Refinements n: {resolutions}")
     print(f" Conforming reference n: {refinement_conforming}")
+    if dt is not None:
+        print(f" Time step dt: {dt}")
+    print(f" Final time t_final: {t_final}")
     if solver_type.lower() == "brinkman":
         print(f" Brinkman Resistance R: {R_penalty}")
     print("=" * 75 + "\n")
@@ -179,7 +183,7 @@ def run_convergence_analysis(
     if not os.path.exists(conf_vel_file):
         print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming})...")
         conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
-        conf_solver.conforming_solve()
+        conf_solver.conforming_solve(dt=dt, t_final=t_final)
         conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
         conf_vel_file = get_field_filepath(conf_dir, "velocity", t_final)
         conf_pres_file = get_field_filepath(conf_dir, "pressure", t_final)
@@ -212,11 +216,11 @@ def run_convergence_analysis(
         # 1. Run specified solver
         if solver_type.lower() == "brinkman":
             solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
-            solver.Brinkman_solve()
+            solver.Brinkman_solve(dt=dt, t_final=t_final)
             case_name = "Brinkman"
         elif solver_type.lower() in ("dlm", "ns_dlm"):
             solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.NS_DLM_Solve()
+            solver.NS_DLM_Solve(dt=dt, t_final=t_final)
             case_name = "DLM"
         else:
             raise ValueError(f"Unknown solver type '{solver_type}'. Must be 'Brinkman' or 'dlm'.")
@@ -381,12 +385,13 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [50, 75, 100,125, 150]         # Mesh refinement levels n to simulate
+    resolutions = [50, 75, 100, 125, 150]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                     # "square" or "cylinder" (both stationary/fixed)
     solver_type = "dlm"                          # "Brinkman" or "dlm"
     Re = 40.0                                    # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
-    refinement_conforming = 200                  # Exact conforming reference mesh refinement
+    refinement_conforming = 300                # Exact conforming reference mesh refinement
     R_penalty = 100000.0                         # Resistive parameter R (for Brinkman solver)
+    dt = 0.5                                     # Time step size dt (can be None to use solver default)
     t_final = 20.0                               # Final simulation time step t_final
     # =========================================================================
 
@@ -397,5 +402,6 @@ if __name__ == "__main__":
         Re=Re,
         refinement_conforming=refinement_conforming,
         R_penalty=R_penalty,
+        dt=dt,
         t_final=t_final
     )
