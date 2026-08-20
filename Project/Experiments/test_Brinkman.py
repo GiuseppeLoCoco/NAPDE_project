@@ -88,9 +88,28 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         # DirichletBC(W.sub(1), p_ex, 4) 
     ]
 
+    # -------------------------------------------------------------------------
+    # WARM START: Inizialization with Stokes (Linearity)
+    # -------------------------------------------------------------------------
     uh_n = Function(V)
+    sol_init = Function(W)
+    
+    # Stokes variational formulation
+    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
+             - div(v) * p * dx \
+             + div(u) * q * dx
+    L_init = inner(f_val, v) * dx
+    
+    solve(a_init == L_init, sol_init, bcs=bcs, 
+          solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+          
+    uh_n.assign(sol_init.subfunctions[0])
+    # -------------------------------------------------------------------------
+
+    # uh_n = Function(V)
     # uh_n.assign(0.0)
-    uh_n.interpolate(u_ex)
+    # uh_n.interpolate(u_ex)
+
     sol = Function(W)
     uh, ph = sol.subfunctions
 
@@ -159,9 +178,29 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
         # DirichletBC(W.sub(1), p_ex, 4)
     ]
 
+    # -------------------------------------------------------------------------
+    # WARM START: Inizialization with Stokes (Linearity)
+    # -------------------------------------------------------------------------
     uh_n = Function(V)
+    sol_init = Function(W)
+    
+    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
+            - div(v) * p * dx \
+            + div(u) * q * dx \
+            + Constant(R_penalty) * chi_buf * inner(u, v) * dx
+    L_init = inner(f_val, v) * dx \
+            + Constant(R_penalty) * chi_buf * inner(u_ex, v) * dx
+    
+    solve(a_init == L_init, sol_init, bcs=bcs, 
+        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+          
+    uh_n.assign(sol_init.subfunctions[0])
+    # -------------------------------------------------------------------------
+
+    # uh_n = Function(V)
     # uh_n.assign(0.0)
-    uh_n.interpolate(u_ex)
+    # uh_n.interpolate(u_ex)
+
     sol = Function(W)
     uh, ph = sol.subfunctions
 
@@ -179,10 +218,31 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
 
     num_steps = max(1, int(round(T_end / dt)))
 
+    num_steps_max = 30   
+    tol_steady = 1e-3   
+    t_val = 0.0
+
+    for step in range(num_steps_max):
+        t_val += dt
+        solve(a == L, sol, bcs=bcs,
+              solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+        
+        diff_u = uh - uh_n
+        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
+        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
+
+        uh_n.assign(uh)
+        
+        if float(increment_H1) < tol_steady:
+            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
+            break
+
+    """
     for _ in range(num_steps):
         solve(a == L, sol, bcs=bcs,
               solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
         uh_n.assign(uh)
+    """
 
     return uh, ph, mesh
 
@@ -418,7 +478,7 @@ if __name__ == "__main__":
         L_buf=1.0,                      # Length of the buffer region
         Re=40.0,
         R_penalty=1.0e4,                # Brinkman penalty term
-        T_end=5.0,                      # Final time
+        T_end=2.0,                      # Final time
         dt=0.5,
         output_dir="results_buffer_recovery"
     )

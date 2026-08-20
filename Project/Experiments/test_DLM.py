@@ -114,8 +114,25 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
         DirichletBC(V, u_ex, 4)
     ]
 
+    # -------------------------------------------------------------------------
+    # WARM START: Inizialization with Stokes (Linearity)
+    # -------------------------------------------------------------------------
     uh_n = Function(V)
-    uh_n.interpolate(u_ex)
+    sol_init = Function(W)
+    
+    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
+                - div(v) * p * dx \
+                + div(u) * q * dx
+    L_init = inner(f_val, v) * dx
+    
+    solve(a_init == L_init, sol_init, bcs=bcs_tentative, 
+            solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
+            
+    uh_n.assign(sol_init.subfunctions[0])
+    # -------------------------------------------------------------------------
+
+    # uh_n = Function(V)
+    # uh_n.interpolate(u_ex)
 
     lambda_n = Function(Z)
     lambda_n.assign(0.0)
@@ -130,7 +147,7 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     # -------------------------------------------------------------------------
     a1 = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
         + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + Constant(rho)*div(uh_n)*inner(u, v)*dx_fluid \
+        + Constant(mms.rho)*div(uh_n)*inner(u, v)*dx \
         + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
         - div(v) * p * dx \
         + div(u) * q * dx
@@ -379,7 +396,7 @@ if __name__ == "__main__":
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
-        T_end=5.0,
+        T_end=2.0,
         dt=0.5,
         output_dir="results_dlm_buffer_recovery"
     )
