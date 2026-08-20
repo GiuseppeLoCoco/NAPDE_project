@@ -68,30 +68,33 @@ def get_mms_exact_fields(mesh, Re=40.0, Lx=Lx, Ly=Ly, x_obs=x_obs, y_obs=y_obs, 
     X = SpatialCoordinate(mesh)
     x, y = X[0], X[1]
 
-    # 1. Distanza geometrica dall'ostacolo quadrato
-    dx_val = conditional(abs(x - x_obs) - side_length / 2.0 > 0.0, abs(x - x_obs) - side_length / 2.0, 0.0)
-    dy_val = conditional(abs(y - y_obs) - side_length / 2.0 > 0.0, abs(y - y_obs) - side_length / 2.0, 0.0)
-    r = sqrt(dx_val**2 + dy_val**2)
+    # 1. Distanze esterne al quadrato (evitando sqrt per non dividere per zero)
+    dx_val = Conditional(abs(x - x_obs) - side_length / 2.0 > 0.0, abs(x - x_obs) - side_length / 2.0, 0.0)
+    dy_val = Conditional(abs(y - y_obs) - side_length / 2.0 > 0.0, abs(y - y_obs) - side_length / 2.0, 0.0)
+    
+    # r2 = r^2, quindi r4 = (r^2)^2 (puramente polinomiale, C^3 e senza 1/sqrt(0))
+    r2 = dx_val**2 + dy_val**2
+    r4 = r2 * r2
 
-    # 2. Funzione di corrente psi (regolarita' C^3)
-    psi = (r**4) * (sin(pi * y / Ly)**2) * cos(pi * x / Lx)
+    # 2. Funzione di corrente psi
+    psi = r4 * (sin(pi * y / Ly)**2) * cos(pi * x / Lx)
 
-    # 3. Campo di velocita' esatto: u_x = d(psi)/dy, u_y = -d(psi)/dx
+    # 3. Campo di velocita' esatto: div(u) = 0
     grad_psi = grad(psi)
     u_exact = as_vector([grad_psi[1], -grad_psi[0]])
 
-    # 4. Pressione esatta
-    p_exact = (r**3) * cos(pi * x / Lx) * sin(pi * y / Ly)
+    # 4. Pressione esatta (r2 * sqrt(r2) evitato: usiamo r2 per continuita' C^1)
+    p_exact = r2 * cos(pi * x / Lx) * sin(pi * y / Ly)
 
-    # 5. Viscosita' dinamica coerente con i parametri dei solutori
+    # 5. Parametri fisici
     mu = rho * L_char * u_char / Re
 
-    # 6. Forzante MMS per il bilancio della quantita' di moto
+    # 6. Forzante MMS
     f_mms = rho * dot(u_exact, nabla_grad(u_exact)) - div(mu * sym(grad(u_exact))) + grad(p_exact)
 
-    # 7. Flusso di trazione naturale di Neumann per l'uscita (x = Lx)
+    # 7. Flusso di trazione Neumann
     n_vec = FacetNormal(mesh)
-    dim = mesh.geometric_dimension()
+    dim = mesh.geometric_dimension if isinstance(mesh.geometric_dimension, int) else (mesh.geometric_dimension() if callable(mesh.geometric_dimension) else 2)
     sigma_exact = mu * sym(grad(u_exact)) - p_exact * Identity(dim)
     g_neumann = dot(sigma_exact, n_vec)
 
@@ -275,8 +278,8 @@ if __name__ == "__main__":
     Re = 40.0                                           # Reynolds number
     R_penalty = 10000.0                                # Resistive parameter R (for Brinkman solver)
     scale_R = False                                     # Scale Brinkman resistance R(n) = R_0 * (n/n_min)^2
-    dt = 0.05                                         # Time step dt for time integration
-    t_final = 5                                    # Final simulation time step t_final
+    dt = 0.01                                        # Time step dt for time integration
+    t_final = 0.05                                   # Final simulation time step t_final
     # =========================================================================
 
 

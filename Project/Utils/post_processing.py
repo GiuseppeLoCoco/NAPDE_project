@@ -72,19 +72,6 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
     plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
     fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
 
-    # Quiver plot per direzione velocità
-    x_coords = mesh.coordinates.dat.data_ro[:, 0]
-    y_coords = mesh.coordinates.dat.data_ro[:, 1]
-    coarse_mesh = RectangleMesh(24, 8, max(x_coords), max(y_coords))
-    V_coarse = VectorFunctionSpace(coarse_mesh, "CG", 1)
-    uh_coarse = Function(V_coarse).interpolate(uh, allow_missing_dofs=True)
-    x_coarse = coarse_mesh.coordinates.dat.data_ro[:, 0]
-    y_coarse = coarse_mesh.coordinates.dat.data_ro[:, 1]
-    U_coarse = uh_coarse.dat.data_ro[:, 0]
-    V_coarse_val = uh_coarse.dat.data_ro[:, 1]
-    axes[2].quiver(x_coarse, y_coarse, U_coarse, V_coarse_val,
-                   color='black', scale=40, width=0.001, headwidth=2, pivot='mid')
-
     # Sovrapposizione del cilindro solido (se presente)
 
     if solid_mesh is not None:
