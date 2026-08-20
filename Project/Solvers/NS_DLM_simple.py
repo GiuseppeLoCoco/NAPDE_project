@@ -216,14 +216,14 @@ class NS_DLM_Solver:
         # ------- Step 1: tentative velocity (DLM-NS-S1) -------
         a1 = Constant(rho)/Constant(dt)*inner(u, v)*dx_fluid \
             + Constant(rho)*inner(dot(uh_n, nabla_grad(u)), v)*dx_fluid \
-            + Constant(rho)*div(uh_n)*inner(u, v)*dx_fluid \
+            + 0.5*Constant(rho)*div(uh_n)*inner(u, v)*dx_fluid \
             + 2.0 * Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx_fluid \
             - div(v)*p*dx_fluid \
             + div(u)*q*dx_fluid
 
         L1 = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx_fluid \
             + inner(f, v)*dx_fluid \
-            - inner(Lm_f, v)*dx_fluid
+            + inner(Lm_f, v)*dx_fluid
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=fluid_mesh.mesh)
@@ -243,7 +243,7 @@ class NS_DLM_Solver:
         a3 = Constant(rho)/Constant(dt)*inner(u_v, v_v)*dx_fluid
         
         L3 = Constant(rho)/Constant(dt)*inner(u_star, v_v)*dx_fluid \
-              - inner(Lm_f - Lm_f_old, v_v)*dx_fluid
+              + inner(Lm_f - Lm_f_old, v_v)*dx_fluid
 
 
         # ------- Setup output folders -------
