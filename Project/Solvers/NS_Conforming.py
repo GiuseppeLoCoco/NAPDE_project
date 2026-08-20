@@ -115,11 +115,12 @@ class Conforming_solver:
 
         a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
-              + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+              + 2.0 * Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
               - div(v)*p*dx \
               + div(u)*q*dx
         
         L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
+
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=mesh)
             L += inner(g_ex_val, v)*ds_b(2)

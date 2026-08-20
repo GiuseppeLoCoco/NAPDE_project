@@ -57,7 +57,7 @@ class ManufacturedSolution:
 
 
 # =============================================================================
-# 2. FASE 1: CONFORMING BENCHMARK SOLVER (Dominio Fisico Omega_0)
+# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Dominio Fisico Omega_0)
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
@@ -113,7 +113,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
 
 
 # =============================================================================
-# 3. FASE 2: BUFFER RECOVERY SOLVER (Omega_buf + Omega_0 with Brinkman)
+# 3. PHASE 2: BUFFER RECOVERY SOLVER (Omega_buf + Omega_0 with Brinkman)
 # =============================================================================
 
 def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
@@ -178,6 +178,7 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
         + Constant(R_penalty) * chi_buf * inner(u_ex, v) * dx
 
     num_steps = max(1, int(round(T_end / dt)))
+
     for _ in range(num_steps):
         solve(a == L, sol, bcs=bcs,
               solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})

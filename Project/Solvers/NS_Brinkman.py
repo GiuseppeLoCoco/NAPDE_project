@@ -118,6 +118,7 @@ class Brinkman_solver:
         if u_ex_val is not None:
             bcs = [
                 DirichletBC(W.sub(0), u_ex_val, 1),
+                DirichletBC(W.sub(0), u_ex_val, 2),
                 DirichletBC(W.sub(0), u_ex_val, 3),
                 DirichletBC(W.sub(0), u_ex_val, 4)
             ]
@@ -146,7 +147,7 @@ class Brinkman_solver:
 
         a = Constant(rho)/Constant(dt)*inner(u, v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
-              + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+              + 2.0 * Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
               - div(v)*p*dx \
               + div(u)*q*dx \
               + Constant(R) * inner(u, v) * chi_expr * dx
@@ -154,6 +155,7 @@ class Brinkman_solver:
         L = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx \
               + inner(f, v)*dx \
               + Constant(R) * inner(us_expr, v)* chi_expr * dx
+
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=mesh)
             L += inner(g_ex_val, v)*ds_b(2)
@@ -226,7 +228,7 @@ class Brinkman_solver:
         wall_time = time() - t_start
 
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
-    
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes Brinkman solver script')

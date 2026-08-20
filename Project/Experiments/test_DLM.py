@@ -130,6 +130,7 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     # -------------------------------------------------------------------------
     a1 = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
         + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
+        + Constant(rho)*div(uh_n)*inner(u, v)*dx_fluid \
         + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
         - div(v) * p * dx \
         + div(u) * q * dx
