@@ -27,7 +27,7 @@ class Conforming_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, dt=None, t_final=None):
+    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -138,7 +138,32 @@ class Conforming_solver:
 
         # Time-stepping
         t_val = 0.0
-        uh_n.assign(0.0)
+        time_varying_bc(0.0)
+
+        # Initial condition initialization for velocity at t = 0
+        if u_init is not None:
+            if callable(u_init):
+                uh_n.interpolate(u_init(mesh))
+            else:
+                uh_n.assign(u_init)
+        else:
+            print("Initializing velocity with stationary Stokes Conforming solver (t=0)...")
+            a_stokes = 2.0 * Constant(mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
+                - div(v) * p * dx \
+                + div(u) * q * dx
+            L_stokes = inner(f, v) * dx
+            if g_ex_val is not None:
+                ds_b = Measure("ds", domain=mesh)
+                L_stokes += inner(g_ex_val, v) * ds_b(2)
+
+            solve(a_stokes == L_stokes, sol, bcs=bcs, solver_parameters={
+                'ksp_type': 'preonly',
+                'pc_type': 'lu',
+                'pc_factor_mat_solver_type': 'mumps'
+            })
+            uh_n.assign(uh)
+
+        uh.assign(uh_n)
 
         save_VTK(file_dict, t_val, uh, ph)
         save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph)

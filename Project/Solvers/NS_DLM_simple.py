@@ -14,6 +14,7 @@ import math
 import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 from domain_settings.obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
+from Solvers.Stokes_DLM import solve_stokes_dlm_initial
 
 class Timer:
     def __init__(self):
@@ -43,28 +44,27 @@ class NS_DLM_Solver:
         if self.type_obstacle == "cylinder":
             print("\nObstacle: Cylinder")
             self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-            if x_obs == y_obs:
+            if  self.symmetric:
                 print("Symmetric Configuration: cylinder centered in the channel")
-                self.symmetric = True
+                
             else:
                 print("Asymmetric Configuration: cylinder shifted upward in the channel")
-                self.symmetric = False
+                
         elif self.type_obstacle == "square":
             print("\nObstacle: Square")
             self.obstacle = squareObstacle(x_obs, y_obs, side_length)
             self.moving = False  # The square obstacle is typically fixed in the DLM context
-            if x_obs == y_obs: # Assuming the center of the square is at x_obs, y_obs
+            if self.symmetric: # Assuming the center of the square is at x_obs, y_obs
                 print("Symmetric Configuration: square centered in the channel")
-                self.symmetric = True
             else:
                 print("Asymmetric Configuration: square shifted upward in the channel")
-                self.symmetric = False
+                
         elif self.type_obstacle == "line":
             print("\nObstacle: Line")
             # Correct order of arguments for lineObstacle
             self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
-            self.moving = False  # Fixed line obstacle
-            self.symmetric = False # Line obstacles are generally not symmetric in this context
+            self.moving = False  # Fixed line obstacle this context
+            self.symmetric = False # Line obstacles are generally not symmetric in
         elif self.type_obstacle == "rotating_line":
             print("\nObstacle: Rotating Line")
             # Correct order of arguments for rotatingLineObstacle
@@ -74,7 +74,7 @@ class NS_DLM_Solver:
             raise ValueError(f"Type of obstacle not supported: {self.type_obstacle}")
 
 
-    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, dt=None, t_final=None):
+    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # Start the timer for the simulation
         timer_total.start()
@@ -263,7 +263,22 @@ class NS_DLM_Solver:
         # ----------------------------------
 
         t_val = 0.0
-        uh_n.assign(0.0)
+        time_varying_bc(0.0)
+
+        # Initial condition initialization for velocity at t = 0
+        if u_init is not None:
+            if callable(u_init):
+                uh_n.interpolate(u_init(fluid_mesh.mesh))
+            else:
+                uh_n.assign(u_init)
+        else:
+            print("Initializing velocity with stationary Stokes DLM solver (t=0)...")
+            uh_stokes, _ = solve_stokes_dlm_initial(
+                fluid_mesh=fluid_mesh, solid_mesh=solid_mesh, obstacle=self.obstacle,
+                type_obstacle=self.type_obstacle, n=self.n, Re=Re,
+                f_custom=f_custom, u_exact=u_exact, p_exact=p_exact, g_custom=g_custom
+            )
+            uh_n.assign(uh_stokes)
 
         for step in range(num_steps):
             t_val += dt

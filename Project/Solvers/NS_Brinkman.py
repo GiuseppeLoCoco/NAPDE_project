@@ -15,6 +15,8 @@ from domain_settings import create_bcs_penalty, time_varying_bc
 from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 
+from Solvers.Stokes_Brinkman import solve_stokes_brinkman_initial
+
 class Brinkman_solver:
 
     def __init__(self, moving=False, type_obstacle="square", n=None, R=None, Re=None):
@@ -27,7 +29,7 @@ class Brinkman_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, dt=None, t_final=None):
+    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -177,7 +179,24 @@ class Brinkman_solver:
 
         # Time-stepping
         t_val = 0.0
-        uh_n.assign(0.0)
+        time_varying_bc(0.0)
+
+        # Initial condition initialization for velocity at t = 0
+        if u_init is not None:
+            if callable(u_init):
+                uh_n.interpolate(u_init(mesh))
+            else:
+                uh_n.assign(u_init)
+        else:
+            print("Initializing velocity with stationary Stokes Brinkman solver (t=0)...")
+            uh_stokes, _ = solve_stokes_brinkman_initial(
+                mesh=mesh, W=W, obstacle=self.obstacle,
+                type_obstacle=self.type_obstacle, n=self.n, Re=self.Re, R=self.R,
+                f_custom=f_custom, u_exact=u_exact, p_exact=p_exact, g_custom=g_custom
+            )
+            uh_n.assign(uh_stokes)
+
+        uh.assign(uh_n)
 
         DG1 = FunctionSpace(mesh, 'DG', 1)
         phiFun = Function(DG1)

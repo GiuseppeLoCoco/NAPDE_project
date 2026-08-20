@@ -13,12 +13,13 @@ from user_inputs import *
 from domain_settings import create_brinkman_riis_bcs, time_varying_bc
 from obstacles import circleObstacle
 from post_processing import save_VTK, create_output_folders, plot_results, save_checkpoint
+from Solvers.Stokes_RIIS import solve_stokes_riis_initial
 
 class RIIS_solver:
     def __init__(self, moving=True):
         self.moving = moving
 
-    def RIIS_solve(self, args=None):
+    def RIIS_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -91,7 +92,24 @@ class RIIS_solver:
 
         # Time-stepping
         t_val = 0.0
-        uh_n.assign(0.0)
+        time_varying_bc(0.0)
+
+        # Initial condition initialization for velocity at t = 0
+        if u_init is not None:
+            if callable(u_init):
+                uh_n.interpolate(u_init(mesh))
+            else:
+                uh_n.assign(u_init)
+        else:
+            print("Initializing velocity with stationary Stokes RIIS solver (t=0)...")
+            uh_stokes, _ = solve_stokes_riis_initial(
+                mesh=mesh, W=W, obstacle=self.obstacle,
+                type_obstacle="circle", n=n, R=R,
+                f_custom=f_custom, u_exact=u_exact, p_exact=p_exact, g_custom=g_custom
+            )
+            uh_n.assign(uh_stokes)
+
+        uh.assign(uh_n)
 
         DG1 = FunctionSpace(mesh, 'DG', 1)
         phiFun = Function(DG1)
