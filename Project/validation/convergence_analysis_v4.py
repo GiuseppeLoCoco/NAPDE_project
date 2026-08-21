@@ -147,7 +147,8 @@ def run_convergence_analysis(
     refinement_conforming: int,
     R_penalty: float = 1000.0,
     dt: Optional[float] = None,
-    t_final: float = 20.0
+    t_final: float = 20.0,
+    t_final_conforming: Optional[float] = None
 ):
     """
     Executes simulations for each resolution n, loads saved results,
@@ -162,13 +163,15 @@ def run_convergence_analysis(
     else:
         raise ValueError(f"Unsupported obstacle type '{obstacle_type}'. Choose 'square' or 'cylinder'.")
 
+    t_conf = t_final_conforming if t_final_conforming is not None else t_final
+
     print("\n" + "=" * 75)
     print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re})")
     print(f" Refinements n: {resolutions}")
-    print(f" Conforming reference n: {refinement_conforming}")
+    print(f" Conforming reference n: {refinement_conforming} (at t = {t_conf:.2f}s)")
     if dt is not None:
         print(f" Time step dt: {dt}")
-    print(f" Final time t_final: {t_final}")
+    print(f" Final time t_final ({solver_type.upper()}): {t_final:.2f}s")
     if solver_type.lower() == "brinkman":
         print(f" Brinkman Resistance R: {R_penalty}")
     print("=" * 75 + "\n")
@@ -177,18 +180,18 @@ def run_convergence_analysis(
     # STEP 1: CONFORMING REFERENCE SIMULATION
     # -------------------------------------------------------------------------
     conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
-    conf_vel_file = get_field_filepath(conf_dir, "velocity", t_final)
-    conf_pres_file = get_field_filepath(conf_dir, "pressure", t_final)
+    conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
+    conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
 
     if not os.path.exists(conf_vel_file):
-        print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming})...")
+        print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s)...")
         conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
-        conf_solver.conforming_solve(dt=dt, t_final=t_final)
+        conf_solver.conforming_solve(dt=dt, t_final=t_conf)
         conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
-        conf_vel_file = get_field_filepath(conf_dir, "velocity", t_final)
-        conf_pres_file = get_field_filepath(conf_dir, "pressure", t_final)
+        conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
+        conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
     else:
-        print(f">> Loaded existing Conforming reference solution from: {conf_vel_file}")
+        print(f">> Loaded existing Conforming reference solution (t = {t_conf:.2f}s) from: {conf_vel_file}")
 
     u_ex = load_hdf5_solution(conf_vel_file, "velocity")
     p_ex = load_hdf5_solution(conf_pres_file, "pressure") if os.path.exists(conf_pres_file) else None
@@ -284,14 +287,18 @@ def run_convergence_analysis(
     print("=" * 70 + "\n")
 
     # -------------------------------------------------------------------------
-    # STEP 4: LOG-LOG CONVERGENCE PLOT AND SUMMARY TABLE IMAGE
+    # STEP 4: LOG-LOG CONVERGENCE PLOT, VERTICAL PROFILE AND SUMMARY TABLES
     # -------------------------------------------------------------------------
     case_name = "Brinkman" if solver_type.lower() == "brinkman" else "DLM"
     out_dir = os.path.join(project_dir, "Plots", case_name)
     os.makedirs(out_dir, exist_ok=True)
     plot_filename = os.path.join(out_dir, f"convergence_loglog_{case_name}_{obstacle_type}_Re{Re}.png")
 
-    fig, (ax_plot, ax_table) = plt.subplots(1, 2, figsize=(15, 6.5), gridspec_kw={'width_ratios': [1.25, 1]})
+    fig = plt.figure(figsize=(20, 6.5))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.25, 1.0, 1.25])
+    ax_plot = fig.add_subplot(gs[0, 0])
+    ax_prof = fig.add_subplot(gs[0, 1])
+    ax_table = fig.add_subplot(gs[0, 2])
 
     # 1. Log-Log Error Curves Plot
     ax_plot.loglog(dx_h, err_L2_u, 'o-', color='#2c7bb6', linewidth=2, markersize=8, label='$L^2$ Velocity Error')
@@ -308,14 +315,11 @@ def run_convergence_analysis(
 
     ax_plot.set_xlabel("Mesh size $h = 1/n$", fontsize=12)
     ax_plot.set_ylabel("Error Norm (at $t = T_{final}$)", fontsize=12)
-    ax_plot.set_title(f"Spatial Convergence — {case_name} ({obstacle_type.capitalize()}, Re={Re})", fontsize=13, fontweight='bold')
+    ax_plot.set_title(f"Spatial Convergence — {case_name}\n({obstacle_type.capitalize()}, Re={Re})", fontsize=13, fontweight='bold')
     ax_plot.grid(True, which="both", linestyle="--", alpha=0.5)
     ax_plot.legend(fontsize=10, framealpha=0.9)
 
     # 2. Vertical Velocity Profile
-    fig = plt.figure(figsize=(18, 5.5))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.1, 1.1])
-    ax_prof = fig.add_subplot(gs[0, 1])
     ax_prof.plot(u_mag_ref, y_ref, 'k-', lw=2.2, label='Conforming (ref.)', zorder=5)
 
     colors = plt.cm.viridis(np.linspace(0.2, 0.85, len(resolutions)))
@@ -325,7 +329,7 @@ def run_convergence_analysis(
 
     ax_prof.set_xlabel("$\\|\\mathbf{u}\\|$ [m/s]", fontsize=11)
     ax_prof.set_ylabel("$y$ [m]", fontsize=11)
-    ax_prof.set_title(f"Centerline Profile ($x = {x_obs:.2f}, t = T$)", fontsize=12, fontweight='bold')
+    ax_prof.set_title(f"Centerline Profile\n($x = {x_obs:.2f}, t = T_{{final}}$)", fontsize=12, fontweight='bold')
     ax_prof.grid(True, ls="--", alpha=0.5)
     ax_prof.legend(fontsize=9, loc='upper right')
 
@@ -385,14 +389,15 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [50, 75, 100, 125, 150]        # Mesh refinement levels n to simulate
+    resolutions = [50,75,100, 125,150]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                     # "square" or "cylinder" (both stationary/fixed)
     solver_type = "dlm"                          # "Brinkman" or "dlm"
     Re = 40.0                                    # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
-    refinement_conforming = 300                # Exact conforming reference mesh refinement
+    refinement_conforming = 200                # Exact conforming reference mesh refinement
     R_penalty = 100000.0                         # Resistive parameter R (for Brinkman solver)
     dt = 0.5                                     # Time step size dt (can be None to use solver default)
-    t_final = 20.0                               # Final simulation time step t_final
+    t_final = 40.0                               # Final simulation time step t_final for DLM / Brinkman
+    t_final_conforming = 20.0                    # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
     # =========================================================================
 
     run_convergence_analysis(
@@ -403,5 +408,6 @@ if __name__ == "__main__":
         refinement_conforming=refinement_conforming,
         R_penalty=R_penalty,
         dt=dt,
-        t_final=t_final
+        t_final=t_final,
+        t_final_conforming=t_final_conforming
     )
