@@ -186,8 +186,8 @@ class NS_DLM_Solver:
         # Delta-interpolation for Fluid-Structure interaction (Firedrake)
         # ---------------------------------
         fsi_interpolation = FSIInterpolation()
-        # fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
-        # fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
+        fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
+        fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
 
         # ---------------------------------
         # DEFINE VARIATIONAL PROBLEMS
@@ -219,7 +219,7 @@ class NS_DLM_Solver:
 
         a3 = Constant(rho)/Constant(dt)*inner(u_v, v_v)*dx_fluid
         L3 = Constant(rho)/Constant(dt)*inner(u_star, v_v)*dx_fluid \
-              + inner(Lm_f - Lm_f_old, v_v)*dx_fluid
+              - inner(Lm_f - Lm_f_old, v_v)*dx_fluid
 
 
         # ------- Setup output folders -------

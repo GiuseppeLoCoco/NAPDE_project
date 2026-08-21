@@ -133,6 +133,8 @@ class Stokes_DLM_Solver:
         # FSI DELTA-INTERPOLATION
         # ==================================
         fsi_interpolation = FSIInterpolation()
+        fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
+        fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
 
         # ==================================
         # VARIATIONAL FORMULATIONS (3 Steps)
@@ -143,7 +145,7 @@ class Stokes_DLM_Solver:
             + div(u) * q * dx_fluid
 
         L1 = inner(f, v) * dx_fluid \
-            + inner(Lm_f, v) * dx_fluid
+            - inner(Lm_f, v) * dx_fluid
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=fluid_mesh.mesh)
@@ -161,7 +163,7 @@ class Stokes_DLM_Solver:
 
         a3 = (Constant(rho) / Constant(dt_virtual)) * inner(u_v, v_v) * dx_fluid
         L3 = (Constant(rho) / Constant(dt_virtual)) * inner(u_star, v_v) * dx_fluid \
-            + inner(Lm_f - Lm_f_old, v_v) * dx_fluid
+            - inner(Lm_f - Lm_f_old, v_v) * dx_fluid
 
         # ==================================
         # EXECUTE 3-STEP DLM SOLVE

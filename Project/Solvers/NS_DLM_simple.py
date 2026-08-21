@@ -223,7 +223,7 @@ class NS_DLM_Solver:
 
         L1 = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx_fluid \
             + inner(f, v)*dx_fluid \
-            + inner(Lm_f, v)*dx_fluid
+            - inner(Lm_f, v)*dx_fluid
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=fluid_mesh.mesh)
@@ -243,7 +243,7 @@ class NS_DLM_Solver:
         a3 = Constant(rho)/Constant(dt)*inner(u_v, v_v)*dx_fluid
         
         L3 = Constant(rho)/Constant(dt)*inner(u_star, v_v)*dx_fluid \
-              + inner(Lm_f - Lm_f_old, v_v)*dx_fluid
+              - inner(Lm_f - Lm_f_old, v_v)*dx_fluid
 
 
         # ------- Setup output folders -------
