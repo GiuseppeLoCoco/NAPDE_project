@@ -23,6 +23,8 @@ from firedrake import (
     assemble, solve, conditional, lt, ge, sin, cos, pi
 )
 
+from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
+
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & FORCING DEFINITION
@@ -41,7 +43,7 @@ class ManufacturedSolution:
 
     def u_exact(self, X):
         x, y = X[0], X[1]
-        u_x = sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
+        u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
@@ -102,15 +104,15 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     # Boundary conditions for tentative velocity: Dirichlet on top/bottom walls (1, 2) and outlet (4).
     # Upstream inlet (3, x = -L_buf) has no Dirichlet constraint (free natural Neumann traction).
     bcs_tentative = [
-        DirichletBC(W.sub(0), u_ex, 1),
         DirichletBC(W.sub(0), u_ex, 2),
+        DirichletBC(W.sub(0), u_ex, 3),
         DirichletBC(W.sub(0), u_ex, 4)
     ]
 
     # Boundary conditions for velocity correction step
     bcs_correction = [
-        DirichletBC(V, u_ex, 1),
         DirichletBC(V, u_ex, 2),
+        DirichletBC(V, u_ex, 3),
         DirichletBC(V, u_ex, 4)
     ]
 
@@ -123,16 +125,41 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
                 - div(v) * p * dx \
                 + div(u) * q * dx
+    
     L_init = inner(f_val, v) * dx
     
     solve(a_init == L_init, sol_init, bcs=bcs_tentative, 
             solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-            
+
     uh_n.assign(sol_init.subfunctions[0])
     # -------------------------------------------------------------------------
 
-    # uh_n = Function(V)
-    # uh_n.interpolate(u_ex)
+    uh_n_ex = Function(V)
+    # uh_n.assign(0.0)
+    uh_n_ex.interpolate(u_ex)
+
+    # -------------------------------------------------------------------------
+    # Error diagnostics: distance of warm-up initial condition from the
+    # exact MMS solution and compare with the pure interpolation error
+    # -------------------------------------------------------------------------
+    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
+    diff_warmup = uh_n - u_ex
+    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
+    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
+    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
+
+    # 2. Distance of the pure interpolation from the exact MMS solution
+    uh_n_ex = Function(V).interpolate(u_ex)
+    diff_interp = uh_n_ex - u_ex
+    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
+    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
+    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
+
+    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
+    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
+    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
+    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
+    # -------------------------------------------------------------------------
 
     lambda_n = Function(Z)
     lambda_n.assign(0.0)
@@ -147,10 +174,12 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     # -------------------------------------------------------------------------
     a1 = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
         + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + Constant(mms.rho)*div(uh_n)*inner(u, v)*dx \
         + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
         - div(v) * p * dx \
         + div(u) * q * dx
+
+    # Without the stabilization term:
+    # " Constant(mms.rho)*div(uh_n)*inner(u, v)*dx "
 
     L1 = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx \
         + inner(f_val, v) * dx \
@@ -190,22 +219,38 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
 
     num_steps = max(1, int(round(T_end / dt)))
 
-    for _ in range(num_steps):
+    num_steps_max = 300   
+    tol_steady = 1e-7  
+    t_val = 0.0
+
+    for step in range(num_steps_max):
+        t_val += dt
+
         # Step 1: Solve tentative velocity and pressure
         solve(a1 == L1, sol_star, bcs=bcs_tentative, solver_parameters=solver_lu_mumps,
-              form_compiler_parameters={'quadrature_degree': 6})
+              form_compiler_parameters={'quadrature_degree': 8})
 
         # Step 2: Solve Lagrange multiplier on buffer region
         solve(a2 == L2, lambda_new, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 6})
+              form_compiler_parameters={'quadrature_degree': 8})
 
-        # Step 3: Solve velocity projection / correction
-        solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 6})
+        # Step 3: Solve velocity projection / correction (cut the BCs)
+        solve(a3 == L3, uh, solver_parameters=solver_cg_sor,
+              form_compiler_parameters={'quadrature_degree': 8})
 
-        # Update historical state functions
+        diff_u = uh - uh_n
+        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
+        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
+
         uh_n.assign(uh)
         lambda_n.assign(lambda_new)
+
+        if float(increment_H1) < tol_steady:
+            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
+            break
+    else:
+        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
+            f"(last increment: {float(increment_H1):.2e})")
 
     # Memory cleanup of temporary UFL variational forms
     del a1, L1, a2, L2, a3, L3, bcs_tentative, bcs_correction
@@ -254,7 +299,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
                 u_num_x[i] = val[0]
             except Exception:
                 u_num_x[i] = 0.0
-            u_exact_x[i] = math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
+            u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
 
@@ -287,6 +332,13 @@ def run_dlm_experiment_pipeline(
     h_vals = [1.0 / n for n in resolutions]
 
     for n in resolutions:
+
+        h = 1.0 / n
+        # dt_scaled = 0.5 * (h / (1.0/resolutions[0]))**2  # Scaled with O(h^2)
+        # print(f"\n---> Running DLM Resolution n = {n:3d} (h = {h:.4f}, dt = {dt_scaled:.2e}) ...")
+
+        # uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt_scaled)
+
         print(f"\n---> Running DLM Resolution n = {n:3d} (h = {1.0/n:.4f}) ...")
         uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
 
@@ -391,12 +443,12 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[75, 100, 125],
+        resolutions=[20, 40, 60],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
         T_end=2.0,
-        dt=0.5,
+        dt=0.2,
         output_dir="results_dlm_buffer_recovery"
     )
