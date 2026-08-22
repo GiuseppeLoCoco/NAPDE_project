@@ -74,15 +74,24 @@ class NS_DLM_Solver:
             raise ValueError(f"Type of obstacle not supported: {self.type_obstacle}")
 
 
-    def NS_DLM_Solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
+    def NS_DLM_Solve(self, args=None, fluid_mesh=None, solid_mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # Start the timer for the simulation
         timer_total.start()
         if args and hasattr(args, "velocity_degree") and args.velocity_degree:
             fem_degree.update({"velocity_degree": args.velocity_degree})
-        # Create the meshes
         
-        fluid_mesh = create_fluid_mesh(Lx, Ly, self.n)
+        if obstacle is not None:
+            self.obstacle = obstacle
+
+        # Create the meshes
+        if fluid_mesh is None:
+            fluid_mesh = create_fluid_mesh(Lx, Ly, self.n)
+        elif not hasattr(fluid_mesh, 'mesh'):
+            class FluidMeshWrapper:
+                def __init__(self, m):
+                    self.mesh = m
+            fluid_mesh = FluidMeshWrapper(fluid_mesh)
         # ==================================
         # DATA AND SOLVER
         # ==================================
@@ -117,7 +126,8 @@ class NS_DLM_Solver:
         t = Constant(0.0)
 
         # Create the solid mesh based on the obstacle type
-        solid_mesh = create_solid_mesh(self.obstacle, self.n)
+        if solid_mesh is None:
+            solid_mesh = create_solid_mesh(self.obstacle, self.n)
 
         # --------------------------------
         # Initialize Flow Variational Problem
@@ -193,11 +203,17 @@ class NS_DLM_Solver:
                 DirichletBC(FS['fluid'][0], u_ex_val, 3),
                 DirichletBC(FS['fluid'][0], u_ex_val, 4)
             ]
+            if g_ex_val is None:
+                bcs.append(DirichletBC(FS['fluid'][0], u_ex_val, 2))
+                if p_ex_val is not None:
+                    bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, 2))
             bcs_correction = [
                 DirichletBC(V, u_ex_val, 1),
                 DirichletBC(V, u_ex_val, 3),
                 DirichletBC(V, u_ex_val, 4)
             ]
+            if g_ex_val is None:
+                bcs_correction.append(DirichletBC(V, u_ex_val, 2))
         else:
             bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
             bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
@@ -387,6 +403,7 @@ class NS_DLM_Solver:
 
         wall_time = timer_total.stop()
         print("Total simulation wall time : {} sec".format(wall_time), "\n", flush=True)
+        return fluid_mesh.mesh, uh, ph
 
 
 if __name__ == "__main__":

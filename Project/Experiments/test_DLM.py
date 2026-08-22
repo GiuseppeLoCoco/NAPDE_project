@@ -1,5 +1,9 @@
 """
 Numerical Experiment: Upstream Buffer Layer Dirichlet Recovery via Distributed Lagrange Multipliers (DLM)
+Phase 1 (Conforming Benchmark on Omega_0) and Phase 2 (Buffer Recovery via DLM).
+
+Solves the flow equations directly using the project's Conforming_solver and NS_DLM_Solver classes
+without re-implementing the variational formulations or manual Stokes warm-up routines.
 """
 
 import os
@@ -8,22 +12,27 @@ import gc
 import math
 import warnings
 from typing import List, Tuple, Dict
-
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Compatibility for NumPy 1.x and 2.x trapezoidal integration
+# Ensure Project and related directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+
 _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 from firedrake import (
-    RectangleMesh, VectorFunctionSpace, FunctionSpace, Function,
-    TrialFunction, TestFunction, TrialFunctions, TestFunctions,
-    DirichletBC, Constant, SpatialCoordinate, as_vector,
-    inner, dot, grad, sym, div, nabla_grad, dx, ds, sqrt,
-    assemble, solve, conditional, lt, ge, sin, cos, pi
+    RectangleMesh, Constant, SpatialCoordinate,
+    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
+    assemble, conditional, lt, ge, sin, cos, pi
 )
 
-from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
+from Solvers.NS_Conforming import Conforming_solver
+from Solvers.NS_DLM_simple import NS_DLM_Solver
 
 
 # =============================================================================
@@ -38,237 +47,149 @@ class ManufacturedSolution:
         self.Re = Re
         self.rho = rho
         self.u_char = 1.0
-        self.L_char = 0.2  # Characteristic obstacle/channel scale
+        self.L_char = 0.2  # Characteristic scale
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def u_exact(self, X):
+    def u_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
-    def p_exact(self, X):
+    def p_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
 
-    def f_forcing(self, X):
+    def f_forcing(self, mesh):
         """Analytical momentum source term: f = rho*(u.grad)u - div(2*mu*sym(grad(u))) + grad(p)."""
-        u_ex = self.u_exact(X)
-        p_ex = self.p_exact(X)
+        X = SpatialCoordinate(mesh)
+        u_ex = self.u_exact(mesh)
+        p_ex = self.p_exact(mesh)
         adv = self.rho * dot(u_ex, nabla_grad(u_ex))
         diff = - div(2.0 * self.mu * sym(grad(u_ex)))
         press = grad(p_ex)
         return adv + diff + press
 
 
+class BufferObstacle:
+    """Obstacle representing the upstream buffer layer region (x < 0)."""
+    def __init__(self, L_buf: float = 1.0):
+        self.L_buf = L_buf
+
+    def chi(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return conditional(lt(X[0], 0.0), 1.0, 0.0)
+
+    def distExpr(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return X[0]
+
+    def us_x(self, t=None):
+        return Constant(0.0)
+
+    def us_y(self, t=None):
+        return Constant(0.0)
+
+    def get_characteristic_length(self):
+        return 1.0
+
+
 # =============================================================================
-# 2. FRACTIONAL-STEP DLM BUFFER SOLVER
+# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Dominio Fisico Omega_0)
 # =============================================================================
 
-def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
-                     Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                     T_end: float = 2.0, dt: float = 0.5) -> Tuple[Function, Function, Function, object]:
+def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
+                            T_end: float = 5.0, dt: float = 0.5):
     """
-    Solves Navier-Stokes on the extended domain [-L_buf, Lx] x [0, Ly] using the DLM fractional-step method.
-    The buffer region [-L_buf, 0) is enforced to match u_exact via a distributed Lagrange multiplier field.
+    Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
+    with exact Dirichlet boundary conditions.
     """
-    # Grid node alignment: ensures the interface x = 0 lies exactly on mesh cell vertices
+    ny = max(4, int(round(n * Ly / Lx)))
+    mesh = RectangleMesh(n, ny, Lx, Ly)
+
+    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re)
+    mesh_out, uh, ph = solver.conforming_solve(
+        mesh=mesh,
+        obstacle=None,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
+
+
+# =============================================================================
+# 3. PHASE 2: BUFFER RECOVERY SOLVER (Omega_buf + Omega_0 with DLM)
+# =============================================================================
+
+def solve_phase2_dlm_buffer(n: int, mms: ManufacturedSolution,
+                            Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
+                            T_end: float = 5.0, dt: float = 0.5):
+    """
+    Solves Navier-Stokes on extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver.
+    """
     nx_buf = int(round(L_buf * n))
     nx_phys = int(round(Lx * n))
     n_tot = nx_buf + nx_phys
     ny = int(round(Ly * n))
     L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
-    mesh.coordinates.dat.data[:, 0] -= L_buf
+    # Fluid mesh on extended domain
+    fluid_mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    fluid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    X = SpatialCoordinate(mesh)
-    x = X[0]
+    # Solid mesh on buffer region [-L_buf, 0] x [0, Ly]
+    solid_mesh = RectangleMesh(nx_buf, ny, L_buf, Ly)
+    solid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    # Taylor-Hood spaces (P2-P1) for fluid; P1 vector space for Lagrange Multiplier
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    Q = FunctionSpace(mesh, "CG", 1)
-    W = V * Q
-    Z = VectorFunctionSpace(mesh, "CG", 1)
+    buf_obstacle = BufferObstacle(L_buf=L_buf)
+    solver = NS_DLM_Solver(moving=False, n=n, Re=mms.Re)
 
-    u, p = TrialFunctions(W)
-    v, q = TestFunctions(W)
-
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
-    f_val = mms.f_forcing(X)
-
-    # Indicator function: chi_buf = 1 inside buffer (x < 0), 0 inside physical domain (x >= 0)
-    chi_buf = conditional(lt(x, 0.0), 1.0, 0.0)
-
-    # Boundary conditions for tentative velocity: Dirichlet on top/bottom walls (1, 2) and outlet (4).
-    # Upstream inlet (3, x = -L_buf) has no Dirichlet constraint (free natural Neumann traction).
-    bcs_tentative = [
-        DirichletBC(W.sub(0), u_ex, 2),
-        DirichletBC(W.sub(0), u_ex, 3),
-        DirichletBC(W.sub(0), u_ex, 4)
-    ]
-
-    # Boundary conditions for velocity correction step
-    bcs_correction = [
-        DirichletBC(V, u_ex, 2),
-        DirichletBC(V, u_ex, 3),
-        DirichletBC(V, u_ex, 4)
-    ]
-
-    # -------------------------------------------------------------------------
-    # WARM START: Inizialization with Stokes (Linearity)
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-                - div(v) * p * dx \
-                + div(u) * q * dx
-    
-    L_init = inner(f_val, v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs_tentative, 
-            solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-
-    uh_n_ex = Function(V)
-    # uh_n.assign(0.0)
-    uh_n_ex.interpolate(u_ex)
-
-    # -------------------------------------------------------------------------
-    # Error diagnostics: distance of warm-up initial condition from the
-    # exact MMS solution and compare with the pure interpolation error
-    # -------------------------------------------------------------------------
-    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
-    diff_warmup = uh_n - u_ex
-    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
-    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
-    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
-
-    # 2. Distance of the pure interpolation from the exact MMS solution
-    uh_n_ex = Function(V).interpolate(u_ex)
-    diff_interp = uh_n_ex - u_ex
-    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
-    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
-    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
-
-    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
-    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
-    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
-    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
-    # -------------------------------------------------------------------------
-
-    lambda_n = Function(Z)
-    lambda_n.assign(0.0)
-
-    lambda_new = Function(Z)
-    sol_star = Function(W)
-    u_star, ph = sol_star.subfunctions
-    uh = Function(V)
-
-    # -------------------------------------------------------------------------
-    # STEP 1: Tentative Navier-Stokes Problem (with previous multiplier forcing)
-    # -------------------------------------------------------------------------
-    a1 = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
-        + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-        - div(v) * p * dx \
-        + div(u) * q * dx
-
-    # Without the stabilization term:
-    # " Constant(mms.rho)*div(uh_n)*inner(u, v)*dx "
-
-    L1 = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx \
-        + inner(f_val, v) * dx \
-        - inner(chi_buf * lambda_n, v) * dx
-
-    # -------------------------------------------------------------------------
-    # STEP 2: Distributed Lagrange Multiplier Update
-    # -------------------------------------------------------------------------
-    lam = TrialFunction(Z)
-    e = TestFunction(Z)
-
-    a2 = inner(lam, e) * dx
-    L2 = inner(chi_buf * lambda_n, e) * dx \
-        + (Constant(mms.rho) / Constant(dt)) * inner(chi_buf * (u_star - u_ex), e) * dx
-
-    # -------------------------------------------------------------------------
-    # STEP 3: Velocity Correction Step
-    # -------------------------------------------------------------------------
-    u_corr = TrialFunction(V)
-    v_corr = TestFunction(V)
-
-    a3 = (Constant(mms.rho) / Constant(dt)) * inner(u_corr, v_corr) * dx
-    L3 = (Constant(mms.rho) / Constant(dt)) * inner(u_star, v_corr) * dx \
-        - inner(chi_buf * (lambda_new - lambda_n), v_corr) * dx
-
-    # Solver parameter configurations
-    solver_lu_mumps = {
-        'ksp_type': 'preonly',
-        'pc_type': 'lu',
-        'pc_factor_mat_solver_type': 'mumps',
-        'mat_mumps_icntl_14': 80
-    }
-    solver_cg_sor = {
-        'ksp_type': 'cg',
-        'pc_type': 'sor'
-    }
-
-    num_steps = max(1, int(round(T_end / dt)))
-
-    num_steps_max = 300   
-    tol_steady = 1e-7  
-    t_val = 0.0
-
-    for step in range(num_steps_max):
-        t_val += dt
-
-        # Step 1: Solve tentative velocity and pressure
-        solve(a1 == L1, sol_star, bcs=bcs_tentative, solver_parameters=solver_lu_mumps,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        # Step 2: Solve Lagrange multiplier on buffer region
-        solve(a2 == L2, lambda_new, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        # Step 3: Solve velocity projection / correction (cut the BCs)
-        solve(a3 == L3, uh, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        diff_u = uh - uh_n
-        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
-        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
-
-        uh_n.assign(uh)
-        lambda_n.assign(lambda_new)
-
-        if float(increment_H1) < tol_steady:
-            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
-            break
-    else:
-        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
-            f"(last increment: {float(increment_H1):.2e})")
-
-    # Memory cleanup of temporary UFL variational forms
-    del a1, L1, a2, L2, a3, L3, bcs_tentative, bcs_correction
-    gc.collect()
-
-    return uh, ph, lambda_n, mesh
+    mesh_out, uh, ph = solver.NS_DLM_Solve(
+        fluid_mesh=fluid_mesh,
+        solid_mesh=solid_mesh,
+        obstacle=buf_obstacle,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
 
 
 # =============================================================================
-# 3. ERROR EVALUATION & PROFILE EXTRACTION
+# 4. ERROR EVALUATION & PROFILE EXTRACTION
 # =============================================================================
 
-def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
+def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
+    """Compute the errors L2(u), H1(u) and L2(p) on Omega_0."""
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
+
+    err_u = uh - u_ex
+    err_L2_u = sqrt(assemble(inner(err_u, err_u) * dx(domain=mesh)))
+    err_H1_u = sqrt(assemble((inner(err_u, err_u) + inner(grad(err_u), grad(err_u))) * dx(domain=mesh)))
+
+    vol = assemble(Constant(1.0) * dx(domain=mesh))
+    mean_ph = assemble(ph * dx(domain=mesh)) / vol
+    mean_pex = assemble(p_ex * dx(domain=mesh)) / vol
+    err_p = (ph - mean_ph) - (p_ex - mean_pex)
+    err_L2_p = sqrt(assemble(inner(err_p, err_p) * dx(domain=mesh)))
+
+    return float(err_L2_u), float(err_H1_u), float(err_L2_p)
+
+
+def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
     """Computes velocity L2, H1 and pressure L2 errors restricted strictly to Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 
@@ -305,7 +226,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 
 
 # =============================================================================
-# 4. EXPERIMENTAL CONVERGENCE PIPELINE
+# 5. EXPERIMENTAL CONVERGENCE PIPELINE
 # =============================================================================
 
 def run_dlm_experiment_pipeline(
@@ -322,123 +243,138 @@ def run_dlm_experiment_pipeline(
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
     print("=" * 90)
-    print("UPSTREAM BUFFER RECOVERY EXPERIMENT: DISTRIBUTED LAGRANGE MULTIPLIERS (DLM)")
+    print("UPSTREAM BUFFER RECOVERY EXPERIMENT: DLM BUFFER")
     print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] x [0, {Ly}] | Re = {Re}")
     print(f"Mesh Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
     print("=" * 90)
 
-    errs_L2_u, errs_H1_u, errs_L2_p, errs_intf = [], [], [], []
-    profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    res_p1 = {"L2_u": [], "H1_u": [], "L2_p": []}
+    res_p2 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
+    
+    profiles_p2: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     h_vals = [1.0 / n for n in resolutions]
 
     for n in resolutions:
+        print(f"\n---> Running Resolution n = {n:3d} (h = {1.0/n:.4f}) ...")
 
-        h = 1.0 / n
-        # dt_scaled = 0.5 * (h / (1.0/resolutions[0]))**2  # Scaled with O(h^2)
-        # print(f"\n---> Running DLM Resolution n = {n:3d} (h = {h:.4f}, dt = {dt_scaled:.2e}) ...")
+        # 1. Phase 1: Conforming Benchmark
+        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt)
+        e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
+        res_p1["L2_u"].append(e_L2_u1)
+        res_p1["H1_u"].append(e_H1_u1)
+        res_p1["L2_p"].append(e_L2_p1)
+        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e}")
 
-        # uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt_scaled)
-
-        print(f"\n---> Running DLM Resolution n = {n:3d} (h = {1.0/n:.4f}) ...")
-        uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
-
-        e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
-        y_pts, u_x_num, u_x_ex = extract_interface_profile(uh, mms)
+        # 2. Phase 2: DLM Buffer Recovery
+        uh_2, ph_2, mesh_2 = solve_phase2_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
+        e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms)
+        y_pts, u_x_num, u_x_ex = extract_interface_profile(uh_2, mms)
         e_intf = float(np.sqrt(_trapezoid((u_x_num - u_x_ex)**2, y_pts)))
 
-        errs_L2_u.append(e_L2)
-        errs_H1_u.append(e_H1)
-        errs_L2_p.append(e_p)
-        errs_intf.append(e_intf)
-        profiles[n] = (y_pts, u_x_num)
+        res_p2["L2_u"].append(e_L2_u2)
+        res_p2["H1_u"].append(e_H1_u2)
+        res_p2["L2_p"].append(e_L2_p2)
+        res_p2["interf_L2"].append(e_intf)
+        profiles_p2[n] = (y_pts, u_x_num)
+        print(f"  [Phase 2 DLM Buffer] L2(u): {e_L2_u2:.5e} | H1(u): {e_H1_u2:.5e} | L2(p): {e_L2_p2:.5e} | Interface L2: {e_intf:.5e}")
 
-        print(f"     [DLM] L2(u) in Omega_0: {e_L2:.5e} | H1(u): {e_H1:.5e} | L2(p): {e_p:.5e} | Interface L2: {e_intf:.5e}")
-
-        # Explicit cleanup per iteration
-        del uh, ph, lambda_h, mesh
+        del uh_1, ph_1, mesh_1, uh_2, ph_2, mesh_2
         gc.collect()
 
     # Compute empirical spatial convergence rates
-    def compute_rates(err_list):
-        return [np.log(err_list[i] / err_list[i+1]) / np.log(h_vals[i] / h_vals[i+1]) for i in range(len(h_vals)-1)]
+    def compute_rates(err_list, h_list):
+        return [np.log(err_list[i] / err_list[i+1]) / np.log(h_list[i] / h_list[i+1]) for i in range(len(h_list)-1)]
 
-    rates_L2 = compute_rates(errs_L2_u)
-    rates_H1 = compute_rates(errs_H1_u)
-    rates_intf = compute_rates(errs_intf)
+    rates_p1_L2 = compute_rates(res_p1["L2_u"], h_vals)
+    rates_p1_H1 = compute_rates(res_p1["H1_u"], h_vals)
+    rates_p2_L2 = compute_rates(res_p2["L2_u"], h_vals)
+    rates_p2_H1 = compute_rates(res_p2["H1_u"], h_vals)
 
-    # Print summary table
-    print("\n" + "=" * 105)
-    print("CONVERGENCE SUMMARY TABLE: DISTRIBUTED LAGRANGE MULTIPLIERS (DLM) BUFFER RECOVERY")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14} | {'Rate':>6}")
-    print("-" * 105)
+    # Print summary tables
+    print("\n" + "=" * 85)
+    print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
+    print("=" * 85)
+    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14}")
+    print("-" * 85)
     for i, n in enumerate(resolutions):
-        r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
-        r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
-        r_intf_str = f"{rates_intf[i-1]:+6.2f}" if i > 0 else "    --"
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
-    print("=" * 105 + "\n")
+        r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if i > 0 else "   -- "
+        r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if i > 0 else "   -- "
+        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e}")
+
+    print("\n" + "=" * 95)
+    print("Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA DLM (Restricted to Omega_0)")
+    print("=" * 95)
+    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'Interface L2':>14}")
+    print("-" * 95)
+    for i, n in enumerate(resolutions):
+        r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if i > 0 else "   -- "
+        r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if i > 0 else "   -- "
+        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {res_p2['interf_L2'][i]:14.5e}")
+    print("=" * 95 + "\n")
 
     # =========================================================================
-    # 5. GENERATE COMPARISON PLOTS
+    # 6. GENERATE COMPARISON PLOTS
     # =========================================================================
 
     # Plot 1: Spatial Log-Log Convergence Plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-    fig.suptitle("Spatial Convergence: Upstream Buffer Recovery via DLM", fontsize=13, fontweight='bold')
+    fig.suptitle("Spatial Convergence: Pure Conforming vs DLM Buffer Recovery", fontsize=13, fontweight='bold')
 
     h_arr = np.array(h_vals)
-    ax1.loglog(h_arr, errs_L2_u, 'o-', color='#1f77b4', linewidth=2, label='Velocity $L^2(\\Omega_0)$ Error')
-    ax1.loglog(h_arr, errs_H1_u, 's--', color='#ff7f0e', linewidth=1.8, label='Velocity $H^1(\\Omega_0)$ Error')
-    ax1.loglog(h_arr, errs_L2_u[0] * (h_arr / h_arr[0])**2, 'k:', alpha=0.6, label='Optimal $O(h^2)$')
-    ax1.loglog(h_arr, errs_L2_u[0] * (h_arr / h_arr[0])**1, 'k--', alpha=0.6, label='Slope $O(h)$')
+    ax1.loglog(h_arr, res_p1["L2_u"], 'o-', color='#1f77b4', linewidth=2, label='Phase 1: Conforming $L^2(\\mathbf{u})$')
+    ax1.loglog(h_arr, res_p2["L2_u"], 's--', color='#d62728', linewidth=2, label='Phase 2: DLM Buffer $L^2(\\mathbf{u})$')
+    ax1.loglog(h_arr, [res_p1["L2_u"][0] * (h / h_vals[0])**2 for h in h_arr], 'k:', alpha=0.6, label='Optimal $O(h^2)$')
+    ax1.loglog(h_arr, [res_p1["L2_u"][0] * (h / h_vals[0])**1 for h in h_arr], 'k--', alpha=0.6, label='Slope $O(h)$')
     ax1.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax1.set_ylabel("Velocity Error Norms in $\\Omega_0$", fontsize=11)
-    ax1.set_title("Restricted Velocity Error in Physical Domain", fontsize=12, fontweight='bold')
+    ax1.set_ylabel("Velocity $L^2$ Error in $\\Omega_0$", fontsize=11)
+    ax1.set_title("Velocity $L^2$ Error Norm", fontsize=12, fontweight='bold')
     ax1.grid(True, which="both", linestyle="--", alpha=0.5)
     ax1.legend(fontsize=9.5)
 
-    ax2.loglog(h_arr, errs_intf, 'd-', color='#d62728', linewidth=2, label='Interface Trace $L^2(\\Sigma)$ Error')
-    ax2.loglog(h_arr, errs_intf[0] * (h_arr / h_arr[0])**2, 'k:', alpha=0.6, label='Optimal $O(h^2)$')
-    ax2.loglog(h_arr, errs_intf[0] * (h_arr / h_arr[0])**1, 'k--', alpha=0.6, label='Slope $O(h)$')
+    ax2.loglog(h_arr, res_p1["H1_u"], 'o-', color='#1f77b4', linewidth=2, label='Phase 1: Conforming $H^1(\\mathbf{u})$')
+    ax2.loglog(h_arr, res_p2["H1_u"], 's--', color='#d62728', linewidth=2, label='Phase 2: DLM Buffer $H^1(\\mathbf{u})$')
+    ax2.loglog(h_arr, [res_p1["H1_u"][0] * (h / h_vals[0])**1 for h in h_arr], 'k--', alpha=0.6, label='Optimal $O(h)$')
     ax2.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax2.set_ylabel("Trace Error at Interface $\\Sigma$ ($x = 0$)", fontsize=11)
-    ax2.set_title("Dirichlet Interface Recovery vs $h$", fontsize=12, fontweight='bold')
+    ax2.set_ylabel("Velocity $H^1$ Error in $\\Omega_0$", fontsize=11)
+    ax2.set_title("Velocity $H^1$ Error Norm", fontsize=12, fontweight='bold')
     ax2.grid(True, which="both", linestyle="--", alpha=0.5)
     ax2.legend(fontsize=9.5)
 
     plt.tight_layout()
-    conv_plot_path = os.path.join(output_dir, "dlm_spatial_convergence.png")
+    conv_plot_path = os.path.join(output_dir, "convergence_comparison_loglog.png")
     plt.savefig(conv_plot_path, dpi=300)
     plt.close(fig)
-    print(f">> Saved DLM Convergence Plot: {conv_plot_path}")
+    print(f">> Saved Log-Log Convergence Plot: {conv_plot_path}")
 
     # Plot 2: Interface Velocity Cut Profile
     fig_prof, ax_prof = plt.subplots(figsize=(7, 6))
-    fig_prof.suptitle("Interface Velocity Profile $u_x(0, y)$ Recovery via DLM", fontsize=12, fontweight='bold')
+    fig_prof.suptitle("Velocity Profile Recovery at Interface $\\Sigma$ ($x = 0$)", fontsize=12, fontweight='bold')
 
     y_fine = np.linspace(0, Ly, 200)
-    ax_prof.plot(np.zeros_like(y_fine), y_fine, 'k-', linewidth=2.5, label='Target $\\mathbf{u}_{ex}(0, y) = 0$')
+    u_ex_line = np.ones_like(y_fine)  # target u_x at x=0 is 1.0
+    ax_prof.plot(u_ex_line, y_fine, 'k-', linewidth=2.5, label='Target Dirichlet $\\mathbf{u}_{ex}(0,y) = 1.0$')
 
-    colors = plt.cm.viridis(np.linspace(0.15, 0.9, len(resolutions)))
+    colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(resolutions)))
     for idx, n in enumerate(resolutions):
-        y_p, u_p = profiles[n]
-        ax_prof.plot(u_p, y_p, '--', color=colors[idx], linewidth=1.6, label=f'DLM ($n = {n}$)')
+        y_p, u_p = profiles_p2[n]
+        ax_prof.plot(u_p, y_p, '--', color=colors[idx], linewidth=1.8, label=f'DLM Rec. (n={n})')
 
     ax_prof.set_xlabel("Horizontal Velocity $u_x(0, y)$", fontsize=11)
     ax_prof.set_ylabel("Channel Height $y$", fontsize=11)
+    ax_prof.set_xlim(0.8, 1.2)
+    ax_prof.set_ylim(0, Ly)
     ax_prof.grid(True, linestyle="--", alpha=0.5)
     ax_prof.legend(loc="upper right", fontsize=9.5)
 
     plt.tight_layout()
-    prof_plot_path = os.path.join(output_dir, "dlm_interface_profile.png")
+    prof_plot_path = os.path.join(output_dir, "interface_velocity_recovery.png")
     plt.savefig(prof_plot_path, dpi=300)
     plt.close(fig_prof)
     print(f">> Saved DLM Interface Profile Plot: {prof_plot_path}")
 
 
 # =============================================================================
-# 5. ENTRY POINT
+# 7. EXECUTION
 # =============================================================================
 
 if __name__ == "__main__":
