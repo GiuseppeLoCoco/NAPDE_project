@@ -182,7 +182,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     for step in range(num_steps_max):
         t_val += dt
         solve(a == L, sol, bcs=bcs,
-                solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
+                solver_parameters=solver_params,
                 form_compiler_parameters={'quadrature_degree': 8})
         
         diff_u = uh - uh_n
