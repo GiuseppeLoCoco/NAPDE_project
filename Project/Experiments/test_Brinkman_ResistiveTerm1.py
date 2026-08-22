@@ -345,8 +345,7 @@ def run_r_sweep_analysis(
     fig_prof.suptitle(f"Interface Velocity Profile $u_x(0, y)$ vs $R$ ($n = {fixed_n}$)", fontsize=12, fontweight='bold')
     
     y_fine = np.linspace(0, Ly, 200)
-    ax_prof.plot(np.zeros_like(y_fine), y_fine, 'k-', linewidth=2.5, label='Target $\\mathbf{u}_{ex}(0, y) = 0$')
-
+    ax_prof.plot(np.ones_like(y_fine), y_fine, 'k-', linewidth=2.5, label='Target $\\mathbf{u}_{ex}(0, y) = 1$')
     colors = plt.cm.viridis(np.linspace(0.1, 0.95, len(R_values)))
     for idx, R_val in enumerate(R_values):
         y_p, u_p = profiles[R_val]
