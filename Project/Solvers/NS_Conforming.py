@@ -27,7 +27,7 @@ class Conforming_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def conforming_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
+    def conforming_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
@@ -35,18 +35,27 @@ class Conforming_solver:
         # =========== DATA AND SOLVE ===========
         tol = 1e-10
 
-        if self.type_obstacle == "cylinder":
-            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-        elif self.type_obstacle == "square":
-            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-        elif self.type_obstacle == "line":
-                    self.obstacle = lineObstacle(xA, yA, xB, yB, thickness=line_thickness)
-        elif self.type_obstacle == "rotating_line":
-            self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, line_thickness)
+        if obstacle is not None:
+            self.obstacle = obstacle
+        elif self.type_obstacle in ["none", "None", None]:
+            self.obstacle = None
         else:
-            raise ValueError(f"Unsupported obstacle type: {self.type_obstacle}")
+            if self.type_obstacle == "cylinder":
+                self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+            elif self.type_obstacle == "square":
+                self.obstacle = squareObstacle(x_obs, y_obs, side_length)
+            elif self.type_obstacle == "line":
+                self.obstacle = lineObstacle(xA, yA, xB, yB, thickness=line_thickness)
+            elif self.type_obstacle == "rotating_line":
+                self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, line_thickness)
+            else:
+                raise ValueError(f"Unsupported obstacle type: {self.type_obstacle}")
 
-        mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n)
+        if mesh is None:
+            if self.obstacle is not None:
+                mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n)
+            else:
+                mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
         
         tol = 1e-10
         T_end = float(t_final) if t_final is not None else 20.0
@@ -62,8 +71,8 @@ class Conforming_solver:
         # Characteristic velocity
         u_char = 1              # mean velocity
 
-        # Charateristic length
-        L_char = self.obstacle.get_characteristic_length()
+        # Characteristic length
+        L_char = self.obstacle.get_characteristic_length() if self.obstacle is not None else 1.0
 
         # Dynamic viscosity
         mu = rho * L_char * u_char / Re
@@ -95,7 +104,10 @@ class Conforming_solver:
         uh, ph = sol.subfunctions
 
         # Define variational problem
-        us_expr = as_vector((self.obstacle.us_x(t_param), self.obstacle.us_y(t_param)))
+        if self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+            us_expr = as_vector((self.obstacle.us_x(t_param), self.obstacle.us_y(t_param)))
+        else:
+            us_expr = Constant((0.0, 0.0))
 
         if self.moving:
             w = us_expr
@@ -107,9 +119,14 @@ class Conforming_solver:
             bcs = [
                 DirichletBC(W.sub(0), u_ex_val, 1),
                 DirichletBC(W.sub(0), u_ex_val, 3),
-                DirichletBC(W.sub(0), u_ex_val, 4),
-                DirichletBC(W.sub(0), u_ex_val, 5)
+                DirichletBC(W.sub(0), u_ex_val, 4)
             ]
+            if self.obstacle is not None:
+                bcs.append(DirichletBC(W.sub(0), u_ex_val, 5))
+            if g_ex_val is None:
+                bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
+                if p_ex_val is not None:
+                    bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
         else:
             bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
 
@@ -232,6 +249,7 @@ class Conforming_solver:
         wall_time = time() - t_start
 
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
+        return mesh, uh, ph
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Navier-Stokes Conforming solver script')

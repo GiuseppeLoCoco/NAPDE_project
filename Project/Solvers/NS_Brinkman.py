@@ -29,41 +29,42 @@ class Brinkman_solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
-    def Brinkman_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
+    def Brinkman_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
 
         # ==================================
-        # CREATE MESH
+        # CREATE MESH & OBSTACLE
         # ==================================
-
-        if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
-
-            if self.type_obstacle == "cylinder":
-                print("\nObstacle: Cylinder")
-                self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-            elif self.type_obstacle == "square":
-                print("\nObstacle: Square")
-                self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-
-            if y_obs == Ly/2:
-                print("\nSymmetric configuration: cylinder centered in the channel")
-                self.symmetric = True
-            else:
-                print("\nAsymmetric configuration: cylinder moved higher in the channel")
-                self.symmetric = False
-
+        if obstacle is not None:
+            self.obstacle = obstacle
         else:
+            if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+                if self.type_obstacle == "cylinder":
+                    print("\nObstacle: Cylinder")
+                    self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+                elif self.type_obstacle == "square":
+                    print("\nObstacle: Square")
+                    self.obstacle = squareObstacle(x_obs, y_obs, side_length)
 
-            self.symmetric = False
-
-            if self.type_obstacle == "line":
-                print("\nObstacle: Line")
+                if y_obs == Ly/2:
+                    print("\nSymmetric configuration: cylinder centered in the channel")
+                    self.symmetric = True
+                else:
+                    print("\nAsymmetric configuration: cylinder moved higher in the channel")
+                    self.symmetric = False
             else:
-                print("\nObstacle: Rotating Line")
+                self.symmetric = False
+                if self.type_obstacle == "line":
+                    print("\nObstacle: Line")
+                    self.obstacle = lineObstacle(xA, xB, yA, yB)
+                else:
+                    print("\nObstacle: Rotating Line")
+                    self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
 
-        mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+        if mesh is None:
+            mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
 
         # ==================================
         # DATA AND SOLVER
@@ -101,15 +102,16 @@ class Brinkman_solver:
 
         R = self.R
 
-        if self.type_obstacle == "square":
-            self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-            self.moving = False
-        elif self.type_obstacle == "cylinder":
-            self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-        elif self.type_obstacle == "line":
-            self.obstacle = lineObstacle(xA, xB, yA, yB)
-        elif self.type_obstacle == "rotating":
-            self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
+        if obstacle is None:
+            if self.type_obstacle == "square":
+                self.obstacle = squareObstacle(x_obs, y_obs, side_length)
+                self.moving = False
+            elif self.type_obstacle == "cylinder":
+                self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
+            elif self.type_obstacle == "line":
+                self.obstacle = lineObstacle(xA, xB, yA, yB)
+            elif self.type_obstacle == "rotating":
+                self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
@@ -120,10 +122,13 @@ class Brinkman_solver:
         if u_ex_val is not None:
             bcs = [
                 DirichletBC(W.sub(0), u_ex_val, 1),
-                DirichletBC(W.sub(0), u_ex_val, 2),
                 DirichletBC(W.sub(0), u_ex_val, 3),
                 DirichletBC(W.sub(0), u_ex_val, 4)
             ]
+            if g_ex_val is None:
+                bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
+                if p_ex_val is not None:
+                    bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
         else:
             bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
 
@@ -247,6 +252,7 @@ class Brinkman_solver:
         wall_time = time() - t_start
 
         print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
+        return mesh, uh, ph
 
 
 if __name__ == '__main__':

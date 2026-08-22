@@ -60,9 +60,8 @@ class Stokes_DLM_Solver:
         u_char = 1.0
         L_char = self.obstacle.get_characteristic_length()
         mu = rho * L_char * u_char / self.Re
-        dt_virtual = 1.0
         t = Constant(0.0)
-
+ 
         f = f_custom(fluid_mesh.mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0.0, 0.0)))
         u_ex_val = u_exact(fluid_mesh.mesh) if callable(u_exact) else u_exact
         p_ex_val = p_exact(fluid_mesh.mesh) if callable(p_exact) else p_exact

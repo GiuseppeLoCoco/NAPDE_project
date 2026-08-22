@@ -1,25 +1,35 @@
 """
 Numerical Experiment: Upstream Buffer Layer Dirichlet Recovery via Brinkman Penalization
+Phase 1 (Conforming Benchmark on Omega_0) and Phase 2 (Buffer Recovery via Brinkman Penalization).
+
 """
 
 import os
 import sys
 import math
 import warnings
+from typing import Dict, List, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple
+
+# Ensure Project and related directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
 
 _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 from firedrake import (
-    RectangleMesh, VectorFunctionSpace, FunctionSpace, Function,
-    TrialFunctions, TestFunctions, DirichletBC, Constant, SpatialCoordinate,
-    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, ds, sqrt,
-    assemble, solve, conditional, lt, ge, project, sin, cos, pi
+    RectangleMesh, Constant, SpatialCoordinate,
+    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
+    assemble, conditional, lt, ge, sin, cos, pi
 )
 
-from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
+from Solvers.NS_Brinkman import Brinkman_solver
+from Solvers.NS_Conforming import Conforming_solver
 
 
 # =============================================================================
@@ -36,26 +46,51 @@ class ManufacturedSolution:
         self.L_char = 0.2  # Characteristic length for Reynolds number
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def u_exact(self, X):
+    def u_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
-    def p_exact(self, X):
+    def p_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
 
-    def f_forcing(self, X):
+    def f_forcing(self, mesh):
         """Compute the force of the exact solution for the Navier-Stokes problem"""
-        u_ex = self.u_exact(X)
-        p_ex = self.p_exact(X)
+        X = SpatialCoordinate(mesh)
+        u_ex = self.u_exact(mesh)
+        p_ex = self.p_exact(mesh)
         
-        # f = rho * (u . grad) u - div(2 * mu * sym(grad(u))) + grad(p)
         adv = self.rho * dot(u_ex, nabla_grad(u_ex))
         diff = - div(2.0 * self.mu * sym(grad(u_ex)))
         press = grad(p_ex)
         return adv + diff + press
+
+
+class BufferObstacle:
+    """Obstacle representing the upstream buffer layer region (x < 0)."""
+    def __init__(self, L_buf: float = 1.0):
+        self.L_buf = L_buf
+
+    def chi(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return conditional(lt(X[0], 0.0), 1.0, 0.0)
+
+    def distExpr(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return X[0]
+
+    def us_x(self, t=None):
+        return Constant(0.0)
+
+    def us_y(self, t=None):
+        return Constant(0.0)
+
+    def get_characteristic_length(self):
+        return 1.0
 
 
 # =============================================================================
@@ -63,146 +98,25 @@ class ManufacturedSolution:
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
-                            T_end: float = 5.0, dt: float = 0.5) -> Tuple[Function, Function, object]:
+                            T_end: float = 5.0, dt: float = 0.5):
     """
-    Solve the NS problem on the first domain Omega_0 = [0, Lx] x [0, Ly] with exact Dirichlet boundary conditions.
+    Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
+    with exact Dirichlet boundary conditions.
     """
     ny = max(4, int(round(n * Ly / Lx)))
     mesh = RectangleMesh(n, ny, Lx, Ly)
-    X = SpatialCoordinate(mesh)
 
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    Q = FunctionSpace(mesh, "CG", 1)
-    W = V * Q
-
-    u, p = TrialFunctions(W)
-    v, q = TestFunctions(W)
-
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
-    f_val = mms.f_forcing(X)
-
-    bcs = [
-        DirichletBC(W.sub(0), u_ex, 1),
-        DirichletBC(W.sub(0), u_ex, 2),
-        DirichletBC(W.sub(0), u_ex, 3),
-        DirichletBC(W.sub(0), u_ex, 4),
-        # DirichletBC(W.sub(1), p_ex, 4) 
-    ]
-
-    nullspace = MixedVectorSpaceBasis(W, [W.sub(0), VectorSpaceBasis(constant=True)])
-
-    # """
-    
-    # First strategy of warm-up: Stokes initialization
-
-    # -------------------------------------------------------------------------
-    # WARM START: Inizialization with Stokes (Linearity)
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    # Stokes variational formulation
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-             - div(v) * p * dx \
-             + div(u) * q * dx
-    L_init = inner(f_val, v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs, nullspace=nullspace,
-          solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-          form_compiler_parameters={'quadrature_degree': 8})
-          
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-    
-    """
-
-    # Second Strategy of warm-up: Harmonic extension
-
-    # -------------------------------------------------------------------------
-    # WARM START: Harmonic extension (Lifting) of the BCs
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-             - div(v) * p * dx + div(u) * q * dx
-             
-    L_init = inner(Constant((0.0, 0.0)), v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs, nullspace=nullspace,
-          solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-          
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-    
-    """
-
-    uh_n_ex = Function(V)
-    # uh_n.assign(0.0)
-    uh_n_ex.interpolate(u_ex)
-
-    # -------------------------------------------------------------------------
-    # Error diagnostics: distance of warm-up initial condition from the
-    # exact MMS solution and compare with the pure interpolation error
-    # -------------------------------------------------------------------------
-    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
-    diff_warmup = uh_n - u_ex
-    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
-    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
-    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
-
-    # 2. Distance of the pure interpolation from the exact MMS solution
-    uh_n_ex = Function(V).interpolate(u_ex)
-    diff_interp = uh_n_ex - u_ex
-    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
-    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
-    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
-
-    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
-    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
-    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
-    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
-    # -------------------------------------------------------------------------
-
-    sol = Function(W)
-    uh, ph = sol.subfunctions
-
-    # Variational formulation of the problem
-    a = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
-        + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-        - div(v) * p * dx \
-        + div(u) * q * dx
-
-    L = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx + inner(f_val, v) * dx
-
-    num_steps = max(1, int(round(T_end / dt)))
-
-    num_steps_max = 300   
-    tol_steady = 1e-7  
-    t_val = 0.0
-
-    for step in range(num_steps_max):
-        t_val += dt
-        solve(a == L, sol, bcs=bcs, nullspace=nullspace,
-                solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-                form_compiler_parameters={'quadrature_degree': 8})
-        
-        diff_u = uh - uh_n
-        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
-        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
-
-        uh_n.assign(uh)
-        
-        if float(increment_H1) < tol_steady:
-            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
-            break
-    else:
-        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
-            f"(last increment: {float(increment_H1):.2e})")
-
-    return uh, ph, mesh
+    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re)
+    mesh_out, uh, ph = solver.conforming_solve(
+        mesh=mesh,
+        obstacle=None,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
 
 
 # =============================================================================
@@ -211,14 +125,10 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
 
 def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
                                  L_buf: float = 1.0, R_penalty: float = 1.0e5,
-                                 T_end: float = 5.0, dt: float = 0.5) -> Tuple[Function, Function, object]:
+                                 T_end: float = 5.0, dt: float = 0.5):
     """
-    Solves the extended problem on [-L_buf, Lx] x [0, Ly].
-    - x in [-L_buf, 0): buffer region Omega_buf with Brinkman to u_exact.
-    - x in [0, Lx]: physical region Omega_0.
-    - Boundary x = -L_buf (Tag 3): Neumann condition.
+    Solves extended problem on [-L_buf, Lx] x [0, Ly] using Brinkman_solver with BufferObstacle.
     """
-
     nx_buf = int(round(L_buf * n))
     nx_phys = int(round(Lx * n))
     n_tot = nx_buf + nx_phys
@@ -228,155 +138,19 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
     mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
     mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    X = SpatialCoordinate(mesh)
-    x = X[0]
+    buf_obstacle = BufferObstacle(L_buf=L_buf)
+    solver = Brinkman_solver(moving=False, n=n, R=R_penalty, Re=mms.Re)
 
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    Q = FunctionSpace(mesh, "CG", 1)
-    W = V * Q
-
-    u, p = TrialFunctions(W)
-    v, q = TestFunctions(W)
-
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
-    f_val = mms.f_forcing(X)
-
-    chi_buf = conditional(lt(x, 0.0), 1.0, 0.0)
-
-    # BCs for the extended domain:
-    bcs = [
-        DirichletBC(W.sub(0), u_ex, 2),
-        DirichletBC(W.sub(0), u_ex, 3),
-        DirichletBC(W.sub(0), u_ex, 4),
-        # DirichletBC(W.sub(1), p_ex, 4)
-    ]
-
-    # """
-
-    # First strategy of warm-up: Stokes initialization
-
-    # -------------------------------------------------------------------------
-    # WARM START: Inizialization with Stokes (Linearity)
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-            - div(v) * p * dx \
-            + div(u) * q * dx \
-            + Constant(R_penalty) * chi_buf * inner(u, v) * dx
-    
-    L_init = inner(f_val, v) * dx \
-            + Constant(R_penalty) * chi_buf * inner(u_ex, v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs,
-        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-        form_compiler_parameters={'quadrature_degree': 8})
-    
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-    
-    """
-
-    # Second Strategy of warm-up: Harmonic extension
-
-    # -------------------------------------------------------------------------
-    # WARM START: Harmonic extension with Brinkman
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-             - div(v) * p * dx + div(u) * q * dx \
-             + Constant(R_penalty) * chi_buf * inner(u, v) * dx
-             
-    L_init = inner(Constant((0.0, 0.0)), v) * dx \
-             + Constant(R_penalty) * chi_buf * inner(u_ex, v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs,
-          solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-    
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-
-    """
-
-    uh_n_ex = Function(V)
-    # uh_n.assign(0.0)
-    uh_n_ex.interpolate(u_ex)
-
-    # -------------------------------------------------------------------------
-    # Error diagnostics: distance of warm-up initial condition from the
-    # exact MMS solution and compare with the pure interpolation error
-    # -------------------------------------------------------------------------
-    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
-    diff_warmup = uh_n - u_ex
-    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
-    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
-    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
-
-    # 2. Distance of the pure interpolation from the exact MMS solution
-    uh_n_ex = Function(V).interpolate(u_ex)
-    diff_interp = uh_n_ex - u_ex
-    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
-    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
-    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
-
-    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
-    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
-    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
-    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
-    # -------------------------------------------------------------------------
-
-    sol = Function(W)
-    uh, ph = sol.subfunctions
-
-    # Variational Formulation (Brinkman)
-    a = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
-        + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-        - div(v) * p * dx \
-        + div(u) * q * dx \
-        + Constant(R_penalty) * chi_buf * inner(u, v) * dx
-
-    L = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx \
-        + inner(f_val, v) * dx \
-        + Constant(R_penalty) * chi_buf * inner(u_ex, v) * dx
-
-    num_steps = max(1, int(round(T_end / dt)))
-
-    num_steps_max = 300   
-    tol_steady = 1e-7  
-    t_val = 0.0
-
-    for step in range(num_steps_max):
-        t_val += dt
-        solve(a == L, sol, bcs=bcs,
-              solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-              form_compiler_parameters={'quadrature_degree': 8})
-        
-        diff_u = uh - uh_n
-        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
-        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
-
-        uh_n.assign(uh)
-        
-        if float(increment_H1) < tol_steady:
-            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
-            break
-    else:
-        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
-            f"(last increment: {float(increment_H1):.2e})")
-
-    """
-    for _ in range(num_steps):
-        solve(a == L, sol, bcs=bcs,
-              solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
-        uh_n.assign(uh)
-    """
-
-    return uh, ph, mesh
+    mesh_out, uh, ph = solver.Brinkman_solve(
+        mesh=mesh,
+        obstacle=buf_obstacle,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
 
 
 # =============================================================================
@@ -385,9 +159,8 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
 
 def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
     """Compute the errors L2(u), H1(u) and L2(p) on Omega_0."""
-    X = SpatialCoordinate(mesh)
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     err_u = uh - u_ex
     err_L2_u = sqrt(assemble(inner(err_u, err_u) * dx(domain=mesh)))
@@ -406,8 +179,8 @@ def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) ->
     """Compute the errors L2(u), H1(u) e L2(p) only on Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 
@@ -425,7 +198,7 @@ def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) ->
 
 
 def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 150) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Exctract the vertical profile of velocity u_x along the interface Sigma (x = 0)."""
+    """Extract the vertical profile of velocity u_x along the interface Sigma (x = 0)."""
     y_coords = np.linspace(0.0, mms.Ly, num_points)
     u_num_x = np.zeros(num_points)
     u_exact_x = np.zeros(num_points)
@@ -495,8 +268,7 @@ def run_experiment_pipeline(
         # Interface profile
         y_pts, u_num_x, u_ex_x = extract_interface_profile(uh_2, mms)
         profiles_p2[n] = (y_pts, u_num_x)
-        trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
-        e_interf_L2 = np.sqrt(trapezoid((u_num_x - u_ex_x)**2, y_pts))
+        e_interf_L2 = np.sqrt(_trapezoid((u_num_x - u_ex_x)**2, y_pts))
         
         res_p2["L2_u"].append(e_L2_u2)
         res_p2["H1_u"].append(e_H1_u2)
@@ -513,7 +285,7 @@ def run_experiment_pipeline(
     rates_p2_L2 = compute_rates(res_p2["L2_u"], h_vals)
     rates_p2_H1 = compute_rates(res_p2["H1_u"], h_vals)
 
-    # --- tables ---
+    # --- Tables ---
     print("\n" + "=" * 85)
     print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
     print("=" * 85)
@@ -570,14 +342,13 @@ def run_experiment_pipeline(
     plt.close(fig)
     print(f">> Saved Log-Log Convergence Plot: {conv_plot_path}")
 
-    # FIGURE 2: Recover of the velocity profile x = 0
+    # FIGURE 2: Recovery of the velocity profile x = 0
     fig, ax = plt.subplots(figsize=(7, 6))
     fig.suptitle("Velocity Profile Recovery at Interface $\\Sigma$ ($x = 0$)", fontsize=12, fontweight='bold')
     
-    # Anallytical profile at x = 0
     y_fine = np.linspace(0, Ly, 200)
-    u_ex_line = np.zeros_like(y_fine)  # u_x esatta a x=0 è identicamente 0
-    ax.plot(u_ex_line, y_fine, 'k-', linewidth=2.5, label='Target Dirichlet $\\mathbf{u}_{ex}(0,y) = 0$')
+    u_ex_line = np.ones_like(y_fine)  # target u_x at x=0 is 1.0
+    ax.plot(u_ex_line, y_fine, 'k-', linewidth=2.5, label='Target Dirichlet $\\mathbf{u}_{ex}(0,y) = 1.0$')
 
     colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(resolutions)))
     for idx, n in enumerate(resolutions):
@@ -586,7 +357,7 @@ def run_experiment_pipeline(
 
     ax.set_xlabel("Horizontal Velocity $u_x(0, y)$", fontsize=11)
     ax.set_ylabel("Channel Height $y$", fontsize=11)
-    ax.set_xlim(-0.05, 0.25)
+    ax.set_xlim(0.8, 1.2)
     ax.set_ylim(0, Ly)
     ax.grid(True, linestyle="--", alpha=0.5)
     ax.legend(loc="upper right", fontsize=9.5)
