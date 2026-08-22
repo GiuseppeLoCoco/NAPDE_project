@@ -222,3 +222,29 @@ class squareObstacle:
 
   def get_characteristic_length(self):
         return self.side_length
+
+
+# ==========================
+# Define buffer layer obstacle
+# ==========================
+class BufferObstacle:
+    """Obstacle representing the upstream buffer layer region (x < 0)."""
+    def __init__(self, L_buf: float = 1.0):
+        self.L_buf = L_buf
+
+    def chi(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return conditional(lt(X[0], 0.0), 1.0, 0.0)
+
+    def distExpr(self, mesh, t=None):
+        X = SpatialCoordinate(mesh)
+        return X[0]
+
+    def us_x(self, t=None):
+        return Constant(0.0)
+
+    def us_y(self, t=None):
+        return Constant(0.0)
+
+    def get_characteristic_length(self):
+        return 1.0

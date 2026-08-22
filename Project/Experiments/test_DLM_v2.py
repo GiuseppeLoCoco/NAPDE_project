@@ -12,19 +12,27 @@ from typing import List, Tuple, Dict
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Ensure Project and related directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+
 # Compatibility for NumPy 1.x and 2.x trapezoidal integration
 _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 from firedrake import (
-    RectangleMesh, VectorFunctionSpace, FunctionSpace, Function,
-    TrialFunction, TestFunction, TrialFunctions, TestFunctions,
-    DirichletBC, Constant, SpatialCoordinate, as_vector,
-    inner, dot, grad, sym, div, nabla_grad, dx, ds, sqrt,
-    assemble, solve, conditional, lt, ge, sin, cos, pi
+    RectangleMesh, Constant, SpatialCoordinate,
+    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
+    assemble, conditional, lt, ge, sin, cos, pi
 )
-
-from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
 from firedrake.petsc import PETSc
+
+from domain_settings.obstacles import BufferObstacle
+from Solvers.NS_DLM_simple import NS_DLM_Solver
+
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & FORCING DEFINITION
@@ -41,24 +49,28 @@ class ManufacturedSolution:
         self.L_char = 0.2  # Characteristic obstacle/channel scale
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def u_exact(self, X):
+    def u_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
-    def p_exact(self, X):
+    def p_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
 
-    def f_forcing(self, X):
+    def f_forcing(self, mesh):
         """Analytical momentum source term: f = rho*(u.grad)u - div(2*mu*sym(grad(u))) + grad(p)."""
-        u_ex = self.u_exact(X)
-        p_ex = self.p_exact(X)
+        X = SpatialCoordinate(mesh)
+        u_ex = self.u_exact(mesh)
+        p_ex = self.p_exact(mesh)
         adv = self.rho * dot(u_ex, nabla_grad(u_ex))
         diff = - div(2.0 * self.mu * sym(grad(u_ex)))
         press = grad(p_ex)
         return adv + diff + press
+
 
 
 # =============================================================================
@@ -67,10 +79,10 @@ class ManufacturedSolution:
 
 def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
                      Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                     T_end: float = 2.0, dt: float = 0.5) -> Tuple[Function, Function, Function, object]:
+                     T_end: float = 2.0, dt: float = 0.5) -> Tuple[object, object, object]:
     """
-    Solves Navier-Stokes on the extended domain [-L_buf, Lx] x [0, Ly] using the DLM fractional-step method.
-    The buffer region [-L_buf, 0) is enforced to match u_exact via a distributed Lagrange multiplier field.
+    Solves Navier-Stokes on the extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver.
+    The buffer region [-L_buf, 0] is enforced to match u_exact via a distributed Lagrange multiplier field.
     """
     # Grid node alignment: ensures the interface x = 0 lies exactly on mesh cell vertices
     nx_buf = int(round(L_buf * n))
@@ -79,209 +91,28 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     ny = int(round(Ly * n))
     L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
-    mesh.coordinates.dat.data[:, 0] -= L_buf
+    # Fluid mesh on extended domain
+    fluid_mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    fluid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    X = SpatialCoordinate(mesh)
-    x = X[0]
+    # Solid mesh on buffer region [-L_buf, 0] x [0, Ly]
+    solid_mesh = RectangleMesh(nx_buf, ny, L_buf, Ly)
+    solid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    # Taylor-Hood spaces (P2-P1) for fluid; P1 vector space for Lagrange Multiplier
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    Q = FunctionSpace(mesh, "CG", 1)
-    W = V * Q
-    Z = VectorFunctionSpace(mesh, "CG", 1)
+    buf_obstacle = BufferObstacle(L_buf=L_buf)
+    solver = NS_DLM_Solver(moving=False, n=n, Re=mms.Re)
 
-    u, p = TrialFunctions(W)
-    v, q = TestFunctions(W)
-
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
-    f_val = mms.f_forcing(X)
-
-    # Indicator function: chi_buf = 1 inside buffer (x < 0), 0 inside physical domain (x >= 0)
-    chi_buf = conditional(lt(x, 0.0), 1.0, 0.0)
-
-    # Boundary conditions for tentative velocity: Dirichlet on top/bottom walls (1, 2) and outlet (4).
-    # Upstream inlet (3, x = -L_buf) has no Dirichlet constraint (free natural Neumann traction).
-    bcs_tentative = [
-        DirichletBC(W.sub(0), u_ex, 2),
-        DirichletBC(W.sub(0), u_ex, 3),
-        DirichletBC(W.sub(0), u_ex, 4)
-    ]
-
-    # Boundary conditions for velocity correction step
-    bcs_correction = [
-        DirichletBC(V, u_ex, 2),
-        DirichletBC(V, u_ex, 3),
-        DirichletBC(V, u_ex, 4)
-    ]
-
-    # -------------------------------------------------------------------------
-    # WARM START: Inizialization with Stokes (Linearity)
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-   
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-                - div(v) * p * dx \
-                + div(u) * q * dx
-   
-    L_init = inner(f_val, v) * dx
-   
-    solve(a_init == L_init, sol_init, bcs=bcs_tentative,
-        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-        form_compiler_parameters={'quadrature_degree': 8})
-    
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-
-    uh_n_ex = Function(V)
-    # uh_n.assign(0.0)
-    uh_n_ex.interpolate(u_ex)
-
-    # -------------------------------------------------------------------------
-    # Error diagnostics: distance of warm-up initial condition from the
-    # exact MMS solution and compare with the pure interpolation error
-    # -------------------------------------------------------------------------
-    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
-    diff_warmup = uh_n - u_ex
-    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
-    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
-    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
-
-    # 2. Distance of the pure interpolation from the exact MMS solution
-    uh_n_ex = Function(V).interpolate(u_ex)
-    diff_interp = uh_n_ex - u_ex
-    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
-    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
-    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
-
-    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
-    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
-    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
-    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
-    # -------------------------------------------------------------------------
-
-    lambda_n = Function(Z)
-    lambda_n.assign(0.0)
-
-    lambda_new = Function(Z)
-    sol_star = Function(W)
-    u_star, ph = sol_star.subfunctions
-    uh = Function(V)
-
-    # -------------------------------------------------------------------------
-    # STEP 1: Tentative Navier-Stokes Problem (with previous multiplier forcing)
-    # -------------------------------------------------------------------------
-    a1 = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
-        + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-        - div(v) * p * dx \
-        + div(u) * q * dx
-
-    L1 = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx \
-        + inner(f_val, v) * dx \
-        - inner(chi_buf * lambda_n, v) * dx
-
-    # -------------------------------------------------------------------------
-    # STEP 2: Distributed Lagrange Multiplier Update
-    # -------------------------------------------------------------------------
-    lam = TrialFunction(Z)
-    e = TestFunction(Z)
-
-    a2 = inner(lam, e) * dx
-    L2 = inner(chi_buf * lambda_n, e) * dx \
-        + (Constant(mms.rho) / Constant(dt)) * inner(chi_buf * (u_star - u_ex), e) * dx
-
-    # -------------------------------------------------------------------------
-    # STEP 3: Velocity Correction Step
-    # -------------------------------------------------------------------------
-    u_corr = TrialFunction(V)
-    v_corr = TestFunction(V)
-
-    a3 = (Constant(mms.rho) / Constant(dt)) * inner(u_corr, v_corr) * dx
-    L3 = (Constant(mms.rho) / Constant(dt)) * inner(u_star, v_corr) * dx \
-        - inner(chi_buf * (lambda_new - lambda_n), v_corr) * dx
-
-    # Solver parameter configurations
-    """
-    solver_lu_mumps = {
-        'ksp_type': 'preonly',
-        'pc_type': 'lu',
-        'pc_factor_mat_solver_type': 'mumps',
-        'mat_mumps_icntl_14': 80
-    }
-    """
-
-    solver_lu_mumps = {
-        'ksp_type': 'preonly',
-        'pc_type': 'lu',
-        'pc_factor_mat_solver_type': 'mumps',
-        'mat_mumps_icntl_7': 5,      
-        'mat_mumps_icntl_14': 200,  
-    }
-    
-    solver_cg_sor = {
-        'ksp_type': 'cg',
-        'pc_type': 'sor'
-    }
-
-    solver_fieldsplit = {
-        'ksp_type': 'fgmres',
-        'ksp_rtol': 1e-10,
-        'ksp_max_it': 500,
-        'ksp_converged_reason': None,    
-        'pc_type': 'fieldsplit',
-        'pc_fieldsplit_type': 'schur',
-        'pc_fieldsplit_schur_fact_type': 'full',
-        'pc_fieldsplit_schur_precondition': 'selfp',
-        'fieldsplit_0_ksp_type': 'preonly',
-        'fieldsplit_0_pc_type': 'gamg',
-        'fieldsplit_1_ksp_type': 'preonly',
-        'fieldsplit_1_pc_type': 'jacobi',
-    }
-
-    num_steps = max(1, int(round(T_end / dt)))
-
-    num_steps_max = 300  
-    tol_steady = 1e-7  
-    t_val = 0.0
-
-    for step in range(num_steps_max):
-        t_val += dt
-
-        # Step 1: Solve tentative velocity and pressure
-        solve(a1 == L1, sol_star, bcs=bcs_tentative, solver_parameters=solver_lu_mumps,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        # Step 2: Solve Lagrange multiplier on buffer region
-        solve(a2 == L2, lambda_new, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        # Step 3: Solve velocity projection / correction
-        solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters=solver_cg_sor,
-              form_compiler_parameters={'quadrature_degree': 8})
-
-        diff_u = uh - uh_n
-        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
-        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
-
-        uh_n.assign(uh)
-        lambda_n.assign(lambda_new)
-
-        if float(increment_H1) < tol_steady:
-            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
-            break
-    else:
-        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
-            f"(last increment: {float(increment_H1):.2e})")
-
-    # Memory cleanup of temporary UFL variational forms
-    del a1, L1, a2, L2, a3, L3, bcs_tentative, bcs_correction
-    gc.collect()
-    PETSc.garbage_cleanup(PETSc.COMM_WORLD)
-
-    return uh, ph, lambda_n, mesh
+    mesh_out, uh, ph = solver.NS_DLM_Solve(
+        fluid_mesh=fluid_mesh,
+        solid_mesh=solid_mesh,
+        obstacle=buf_obstacle,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
 
 
 # =============================================================================
@@ -292,8 +123,8 @@ def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[
     """Computes velocity L2, H1 and pressure L2 errors restricted strictly to Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 
@@ -328,6 +159,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 
     return y_coords, u_num_x, u_exact_x
 
+
 # =============================================================================
 # 4. EXPERIMENTAL CONVERGENCE PIPELINE
 # =============================================================================
@@ -342,7 +174,6 @@ def run_dlm_experiment_pipeline(
     dt: float = 0.5,
     output_dir: str = "results_dlm_buffer_recovery"
 ):
-    
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
@@ -358,7 +189,7 @@ def run_dlm_experiment_pipeline(
 
     for n in resolutions:
         print(f"\n---> Running DLM Resolution n = {n:3d} (h = {1.0/n:.4f}) ...")
-        uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
+        uh, ph, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
         y_pts, u_x_num, u_x_ex = extract_interface_profile(uh, mms)
@@ -373,7 +204,7 @@ def run_dlm_experiment_pipeline(
         print(f"     [DLM] L2(u) in Omega_0: {e_L2:.5e} | H1(u): {e_H1:.5e} | L2(p): {e_p:.5e} | Interface L2: {e_intf:.5e}")
 
         # Explicit cleanup per iteration
-        del uh, ph, lambda_h, mesh
+        del uh, ph, mesh
         gc.collect()
         PETSc.garbage_cleanup(PETSc.COMM_WORLD)
 
@@ -433,6 +264,7 @@ def run_dlm_experiment_pipeline(
     plt.savefig(conv_plot_path, dpi=300)
     plt.close(fig)
     print(f">> Saved DLM Convergence Plot: {conv_plot_path}")
+
     # Plot 2: Interface Velocity Cut Profile
     fig_prof, ax_prof = plt.subplots(figsize=(7, 6))
     fig_prof.suptitle("Interface Velocity Profile $u_x(0, y)$ Recovery via DLM", fontsize=12, fontweight='bold')
@@ -454,12 +286,12 @@ def run_dlm_experiment_pipeline(
     plt.close(fig_prof)
     print(f">> Saved DLM Interface Profile Plot: {prof_plot_path}")
 
+
 # =============================================================================
 # 5. ENTRY POINT
 # =============================================================================
 
 if __name__ == "__main__":
-
     run_dlm_experiment_pipeline(
         resolutions=[20, 30, 40, 50, 60],
         Lx=4.0,
