@@ -24,6 +24,7 @@ from firedrake import (
 )
 
 from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
+from firedrake.petsc import PETSc
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & FORCING DEFINITION
@@ -203,15 +204,41 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
         - inner(chi_buf * (lambda_new - lambda_n), v_corr) * dx
 
     # Solver parameter configurations
+    """
     solver_lu_mumps = {
         'ksp_type': 'preonly',
         'pc_type': 'lu',
         'pc_factor_mat_solver_type': 'mumps',
         'mat_mumps_icntl_14': 80
     }
+    """
+
+    solver_lu_mumps = {
+        'ksp_type': 'preonly',
+        'pc_type': 'lu',
+        'pc_factor_mat_solver_type': 'mumps',
+        'mat_mumps_icntl_7': 5,      
+        'mat_mumps_icntl_14': 200,  
+    }
+    
     solver_cg_sor = {
         'ksp_type': 'cg',
         'pc_type': 'sor'
+    }
+
+    solver_fieldsplit = {
+        'ksp_type': 'fgmres',
+        'ksp_rtol': 1e-10,
+        'ksp_max_it': 500,
+        'ksp_converged_reason': None,    
+        'pc_type': 'fieldsplit',
+        'pc_fieldsplit_type': 'schur',
+        'pc_fieldsplit_schur_fact_type': 'full',
+        'pc_fieldsplit_schur_precondition': 'selfp',
+        'fieldsplit_0_ksp_type': 'preonly',
+        'fieldsplit_0_pc_type': 'gamg',
+        'fieldsplit_1_ksp_type': 'preonly',
+        'fieldsplit_1_pc_type': 'jacobi',
     }
 
     num_steps = max(1, int(round(T_end / dt)))
@@ -252,6 +279,7 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
     # Memory cleanup of temporary UFL variational forms
     del a1, L1, a2, L2, a3, L3, bcs_tentative, bcs_correction
     gc.collect()
+    PETSc.garbage_cleanup(PETSc.COMM_WORLD)
 
     return uh, ph, lambda_n, mesh
 
@@ -347,6 +375,7 @@ def run_dlm_experiment_pipeline(
         # Explicit cleanup per iteration
         del uh, ph, lambda_h, mesh
         gc.collect()
+        PETSc.garbage_cleanup(PETSc.COMM_WORLD)
 
     # Compute empirical spatial convergence rates
     def compute_rates(err_list):
