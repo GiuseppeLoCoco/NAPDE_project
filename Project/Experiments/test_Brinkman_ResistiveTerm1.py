@@ -6,6 +6,7 @@ This script analyzes the asymptotic modeling error of the Brinkman upstream buff
 by varying R over several orders of magnitude on a fixed fine mesh (n = 100).
 """
 
+import gc
 import os
 import sys
 import math
@@ -25,6 +26,7 @@ from firedrake import (
     assemble, solve, conditional, lt, ge, sin, cos, pi
 )
 
+from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & BODY FORCING
@@ -43,7 +45,7 @@ class ManufacturedSolution:
 
     def u_exact(self, X):
         x, y = X[0], X[1]
-        u_x = sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
+        u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
@@ -95,15 +97,62 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
 
     chi_buf = conditional(lt(x, 0.0), 1.0, 0.0)
 
-    # Dirichlet on top/bottom walls (1, 2) and outlet (4). Upstream inlet (3) is left natural (Neumann)
+    # Dirichlet on top/bottom walls (3, 4) and outlet (2). Upstream inlet (1) is left natural (Neumann)
     bcs = [
-        DirichletBC(W.sub(0), u_ex, 1),
         DirichletBC(W.sub(0), u_ex, 2),
+        DirichletBC(W.sub(0), u_ex, 3),
         DirichletBC(W.sub(0), u_ex, 4)
     ]
 
+    # First strategy of warm-up: Stokes initialization
+    
+    # -------------------------------------------------------------------------
+    # WARM START: Inizialization with Stokes (Linearity)
+    # -------------------------------------------------------------------------
     uh_n = Function(V)
-    uh_n.interpolate(u_ex)
+    sol_init = Function(W)
+    
+    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
+            - div(v) * p * dx \
+            + div(u) * q * dx \
+            + Constant(R_val) * chi_buf * inner(u, v) * dx
+    
+    L_init = inner(f_val, v) * dx \
+            + Constant(R_val) * chi_buf * inner(u_ex, v) * dx
+    
+    solve(a_init == L_init, sol_init, bcs=bcs,
+        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
+        form_compiler_parameters={'quadrature_degree': 8})
+    
+    uh_n.assign(sol_init.subfunctions[0])
+    # -------------------------------------------------------------------------
+    
+    uh_n_ex = Function(V)
+    uh_n_ex.interpolate(u_ex)
+
+    # -------------------------------------------------------------------------
+    # Error diagnostics: distance of warm-up initial condition from the
+    # exact MMS solution and compare with the pure interpolation error
+    # -------------------------------------------------------------------------
+    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
+    diff_warmup = uh_n - u_ex
+    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
+    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
+    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
+
+    # 2. Distance of the pure interpolation from the exact MMS solution
+    uh_n_ex = Function(V).interpolate(u_ex)
+    diff_interp = uh_n_ex - u_ex
+    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
+    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
+    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
+
+    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
+    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
+    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
+    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
+    # -------------------------------------------------------------------------
+
     sol = Function(W)
     uh, ph = sol.subfunctions
 
@@ -125,10 +174,32 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     }
 
     num_steps = max(1, int(round(T_end / dt)))
-    for _ in range(num_steps):
-        solve(a == L, sol, bcs=bcs, solver_parameters=solver_params,
-              form_compiler_parameters={'quadrature_degree': 6})
+
+    num_steps_max = 300   
+    tol_steady = 1e-7  
+    t_val = 0.0
+
+    for step in range(num_steps_max):
+        t_val += dt
+        solve(a == L, sol, bcs=bcs,
+                solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
+                form_compiler_parameters={'quadrature_degree': 8})
+        
+        diff_u = uh - uh_n
+        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
+        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
+
         uh_n.assign(uh)
+        
+        if float(increment_H1) < tol_steady:
+            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
+            break
+    else:
+        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
+            f"(last increment: {float(increment_H1):.2e})")
+
+    del a, L, bcs, u, p, v, q, uh_n
+    gc.collect()
 
     return uh, ph, mesh
 
@@ -173,7 +244,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
                 u_num_x[i] = val[0]
             except Exception:
                 u_num_x[i] = 0.0
-            u_exact_x[i] = math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
+            u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
 
@@ -299,13 +370,13 @@ def run_r_sweep_analysis(
 
 if __name__ == "__main__":
     run_r_sweep_analysis(
-        R_values=[1.0e3, 1.0e5, 1.0e7],
-        fixed_n=100,
+        R_values=[1.0e3, 1.0e4, 1.0e5, 1.0e6, 1.0e7],
+        fixed_n=60,
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
         T_end=5.0,
-        dt=0.5,
+        dt=0.2,
         output_dir="results_buffer_recovery_v2"
     )

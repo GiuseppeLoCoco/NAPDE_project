@@ -604,7 +604,7 @@ def run_experiment_pipeline(
 
 if __name__ == "__main__":
     run_experiment_pipeline(
-        resolutions=[20, 40, 60],       # Resolutions
+        resolutions=[20, 30, 40, 50, 60],       # Resolutions
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,                      # Length of the buffer region
