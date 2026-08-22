@@ -217,8 +217,10 @@ def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
         'ksp_type': 'preonly',
         'pc_type': 'lu',
         'pc_factor_mat_solver_type': 'mumps',
-        'mat_mumps_icntl_7': 5,      
-        'mat_mumps_icntl_14': 200,  
+        'mat_mumps_icntl_7': 5,
+        'mat_mumps_icntl_14': 200,
+        'mat_mumps_icntl_22': 1,      
+        'mat_mumps_icntl_23': 4000,  
     }
     
     solver_cg_sor = {
