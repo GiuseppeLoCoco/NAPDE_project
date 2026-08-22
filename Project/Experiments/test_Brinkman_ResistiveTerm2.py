@@ -1,5 +1,5 @@
 """
-Numerical Experiment - Version 3:
+Numerical Experiment - Strategy B:
 Spatial Grid Convergence with Balanced Brinkman Penalty Scaling R(h) = R_0 * (n / n_min)^2.
 
 This script tests simultaneous spatial convergence by balancing the FEM discretization
@@ -17,17 +17,26 @@ import gc
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Ensure Project and related directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+
 # Compatibility for NumPy 1.x and 2.x trapezoidal integration
 _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 from firedrake import (
-    RectangleMesh, VectorFunctionSpace, FunctionSpace, Function,
-    TrialFunctions, TestFunctions, DirichletBC, Constant, SpatialCoordinate,
-    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, ds, sqrt,
-    assemble, solve, conditional, lt, ge, sin, cos, pi
+    RectangleMesh, Constant, SpatialCoordinate,
+    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
+    assemble, conditional, lt, ge, sin, cos, pi
 )
 
-from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
+from domain_settings.obstacles import BufferObstacle
+from Solvers.NS_Brinkman import Brinkman_solver
+
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & BODY FORCING
@@ -44,23 +53,27 @@ class ManufacturedSolution:
         self.L_char = 0.2
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def u_exact(self, X):
+    def u_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
-    def p_exact(self, X):
+    def p_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
 
-    def f_forcing(self, X):
-        u_ex = self.u_exact(X)
-        p_ex = self.p_exact(X)
+    def f_forcing(self, mesh):
+        X = SpatialCoordinate(mesh)
+        u_ex = self.u_exact(mesh)
+        p_ex = self.p_exact(mesh)
         adv = self.rho * dot(u_ex, nabla_grad(u_ex))
         diff = - div(2.0 * self.mu * sym(grad(u_ex)))
         press = grad(p_ex)
         return adv + diff + press
+
 
 
 # =============================================================================
@@ -69,9 +82,10 @@ class ManufacturedSolution:
 
 def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
                           Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                          T_end: float = 2.0, dt: float = 0.5) -> Tuple[Function, Function, object]:
+                          T_end: float = 2.0, dt: float = 0.5) -> Tuple[object, object, object]:
     """
-    Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val.
+    Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
+    using the Brinkman_solver class.
     """
     nx_buf = int(round(L_buf * n))
     nx_phys = int(round(Lx * n))
@@ -82,126 +96,19 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
     mesh.coordinates.dat.data[:, 0] -= L_buf
 
-    X = SpatialCoordinate(mesh)
-    x = X[0]
+    buf_obstacle = BufferObstacle(L_buf=L_buf)
+    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re)
 
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    Q = FunctionSpace(mesh, "CG", 1)
-    W = V * Q
-
-    u, p = TrialFunctions(W)
-    v, q = TestFunctions(W)
-
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
-    f_val = mms.f_forcing(X)
-
-    chi_buf = conditional(lt(x, 0.0), 1.0, 0.0)
-
-    # Dirichlet on top/bottom walls (3, 4) and outlet (2)
-    bcs = [
-        DirichletBC(W.sub(0), u_ex, 2),
-        DirichletBC(W.sub(0), u_ex, 3),
-        DirichletBC(W.sub(0), u_ex, 4)
-    ]
-
-    # First strategy of warm-up: Stokes initialization
-    
-    # -------------------------------------------------------------------------
-    # WARM START: Inizialization with Stokes (Linearity)
-    # -------------------------------------------------------------------------
-    uh_n = Function(V)
-    sol_init = Function(W)
-    
-    a_init = 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-            - div(v) * p * dx \
-            + div(u) * q * dx \
-            + Constant(R_val) * chi_buf * inner(u, v) * dx
-    
-    L_init = inner(f_val, v) * dx \
-            + Constant(R_val) * chi_buf * inner(u_ex, v) * dx
-    
-    solve(a_init == L_init, sol_init, bcs=bcs,
-        solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'},
-        form_compiler_parameters={'quadrature_degree': 8})
-    
-    uh_n.assign(sol_init.subfunctions[0])
-    # -------------------------------------------------------------------------
-    
-    uh_n_ex = Function(V)
-    uh_n_ex.interpolate(u_ex)
-
-    # -------------------------------------------------------------------------
-    # Error diagnostics: distance of warm-up initial condition from the
-    # exact MMS solution and compare with the pure interpolation error
-    # -------------------------------------------------------------------------
-    # 1. Distance of the warm-up solution (Stokes/Lifting) from the exact MMS solution
-    diff_warmup = uh_n - u_ex
-    L2_err_warmup = sqrt(assemble(inner(diff_warmup, diff_warmup) * dx(domain=mesh)))
-    H1_warmup_sq = inner(grad(diff_warmup), grad(diff_warmup))
-    H1_err_warmup = sqrt(assemble(H1_warmup_sq * dx(domain=mesh)))
-
-    # 2. Distance of the pure interpolation from the exact MMS solution
-    uh_n_ex = Function(V).interpolate(u_ex)
-    diff_interp = uh_n_ex - u_ex
-    L2_err_interp = sqrt(assemble(inner(diff_interp, diff_interp) * dx(domain=mesh)))
-    H1_interp_sq = inner(grad(diff_interp), grad(diff_interp))
-    H1_err_interp = sqrt(assemble(H1_interp_sq * dx(domain=mesh)))
-
-    print(f"      [Diagnostics] L2 Error Warm-up: {float(L2_err_warmup):.4e}")
-    print(f"      [Diagnostics] H1 Error Warm-up: {float(H1_err_warmup):.4e}")
-    print(f"      [Diagnostics] L2 Error Interpolation: {float(L2_err_interp):.4e}")
-    print(f"      [Diagnostics] H1 Error Interpolation: {float(H1_err_interp):.4e}")
-    # -------------------------------------------------------------------------
-
-    sol = Function(W)
-    uh, ph = sol.subfunctions
-
-    a = (Constant(mms.rho) / Constant(dt)) * inner(u, v) * dx \
-        + Constant(mms.rho) * inner(dot(uh_n, nabla_grad(u)), v) * dx \
-        + 2.0 * Constant(mms.mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-        - div(v) * p * dx \
-        + div(u) * q * dx \
-        + Constant(R_val) * chi_buf * inner(u, v) * dx
-
-    L = (Constant(mms.rho) / Constant(dt)) * inner(uh_n, v) * dx \
-        + inner(f_val, v) * dx \
-        + Constant(R_val) * chi_buf * inner(u_ex, v) * dx
-
-    solver_params = {
-        'ksp_type': 'preonly',
-        'pc_type': 'lu',
-        'pc_factor_mat_solver_type': 'mumps'
-    }
-
-    num_steps = max(1, int(round(T_end / dt)))
-    num_steps_max = 300   
-    tol_steady = 1e-7  
-    t_val = 0.0
-
-    for step in range(num_steps_max):
-        t_val += dt
-        solve(a == L, sol, bcs=bcs,
-                solver_parameters=solver_params,
-                form_compiler_parameters={'quadrature_degree': 8})
-        
-        diff_u = uh - uh_n
-        # increment_L2 = sqrt(assemble(inner(diff_u, diff_u) * dx(domain=mesh)))
-        increment_H1 = sqrt(assemble((inner(diff_u, diff_u) + inner(grad(diff_u), grad(diff_u))) * dx(domain=mesh)))
-
-        uh_n.assign(uh)
-        
-        if float(increment_H1) < tol_steady:
-            print(f"      [!] Steady-state reach at step {step + 1} (t = {t_val:.2f}) | Increment: {float(increment_H1):.2e}")
-            break
-    else:
-        print(f"      [!!] WARNING: steady state NOT reached after {num_steps_max} steps "
-            f"(last increment: {float(increment_H1):.2e})")
-
-    del a, L, bcs, u, p, v, q, uh_n
-    gc.collect()
-
-    return uh, ph, mesh
+    mesh_out, uh, ph = solver.Brinkman_solve(
+        mesh=mesh,
+        obstacle=buf_obstacle,
+        f_custom=mms.f_forcing,
+        u_exact=mms.u_exact,
+        p_exact=mms.p_exact,
+        dt=dt,
+        t_final=T_end
+    )
+    return uh, ph, mesh_out
 
 
 # =============================================================================
@@ -212,8 +119,8 @@ def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[
     """Computes L2(u), H1(u), and L2(p) error norms restricted strictly to Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 

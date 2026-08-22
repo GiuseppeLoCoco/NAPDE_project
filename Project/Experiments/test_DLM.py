@@ -31,6 +31,7 @@ from firedrake import (
     assemble, conditional, lt, ge, sin, cos, pi
 )
 
+from domain_settings.obstacles import BufferObstacle
 from Solvers.NS_Conforming import Conforming_solver
 from Solvers.NS_DLM_simple import NS_DLM_Solver
 
@@ -72,28 +73,6 @@ class ManufacturedSolution:
         press = grad(p_ex)
         return adv + diff + press
 
-
-class BufferObstacle:
-    """Obstacle representing the upstream buffer layer region (x < 0)."""
-    def __init__(self, L_buf: float = 1.0):
-        self.L_buf = L_buf
-
-    def chi(self, mesh, t=None):
-        X = SpatialCoordinate(mesh)
-        return conditional(lt(X[0], 0.0), 1.0, 0.0)
-
-    def distExpr(self, mesh, t=None):
-        X = SpatialCoordinate(mesh)
-        return X[0]
-
-    def us_x(self, t=None):
-        return Constant(0.0)
-
-    def us_y(self, t=None):
-        return Constant(0.0)
-
-    def get_characteristic_length(self):
-        return 1.0
 
 
 # =============================================================================

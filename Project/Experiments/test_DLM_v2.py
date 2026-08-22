@@ -12,19 +12,27 @@ from typing import List, Tuple, Dict
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Ensure Project and related directories are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+
 # Compatibility for NumPy 1.x and 2.x trapezoidal integration
 _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 from firedrake import (
-    RectangleMesh, VectorFunctionSpace, FunctionSpace, Function,
-    TrialFunction, TestFunction, TrialFunctions, TestFunctions,
-    DirichletBC, Constant, SpatialCoordinate, as_vector,
-    inner, dot, grad, sym, div, nabla_grad, dx, ds, sqrt,
-    assemble, solve, conditional, lt, ge, sin, cos, pi
+    RectangleMesh, Constant, SpatialCoordinate,
+    as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
+    assemble, conditional, lt, ge, sin, cos, pi
 )
-
-from firedrake import MixedVectorSpaceBasis, VectorSpaceBasis
 from firedrake.petsc import PETSc
+
+from domain_settings.obstacles import BufferObstacle
+from Solvers.NS_DLM_simple import NS_DLM_Solver
+
 
 # =============================================================================
 # 1. MMS EXACT SOLUTION & FORCING DEFINITION
@@ -41,24 +49,28 @@ class ManufacturedSolution:
         self.L_char = 0.2  # Characteristic obstacle/channel scale
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def u_exact(self, X):
+    def u_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
         u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
         return as_vector([u_x, u_y])
 
-    def p_exact(self, X):
+    def p_exact(self, mesh):
+        X = SpatialCoordinate(mesh)
         x, y = X[0], X[1]
         return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
 
-    def f_forcing(self, X):
+    def f_forcing(self, mesh):
         """Analytical momentum source term: f = rho*(u.grad)u - div(2*mu*sym(grad(u))) + grad(p)."""
-        u_ex = self.u_exact(X)
-        p_ex = self.p_exact(X)
+        X = SpatialCoordinate(mesh)
+        u_ex = self.u_exact(mesh)
+        p_ex = self.p_exact(mesh)
         adv = self.rho * dot(u_ex, nabla_grad(u_ex))
         diff = - div(2.0 * self.mu * sym(grad(u_ex)))
         press = grad(p_ex)
         return adv + diff + press
+
 
 
 # =============================================================================
@@ -67,10 +79,10 @@ class ManufacturedSolution:
 
 def solve_dlm_buffer(n: int, mms: ManufacturedSolution,
                      Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                     T_end: float = 2.0, dt: float = 0.5) -> Tuple[Function, Function, Function, object]:
+                     T_end: float = 2.0, dt: float = 0.5) -> Tuple[object, object, object]:
     """
-    Solves Navier-Stokes on the extended domain [-L_buf, Lx] x [0, Ly] using the DLM fractional-step method.
-    The buffer region [-L_buf, 0) is enforced to match u_exact via a distributed Lagrange multiplier field.
+    Solves Navier-Stokes on the extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver.
+    The buffer region [-L_buf, 0] is enforced to match u_exact via a distributed Lagrange multiplier field.
     """
     # Grid node alignment: ensures the interface x = 0 lies exactly on mesh cell vertices
     nx_buf = int(round(L_buf * n))
@@ -294,8 +306,8 @@ def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[
     """Computes velocity L2, H1 and pressure L2 errors restricted strictly to Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
-    u_ex = mms.u_exact(X)
-    p_ex = mms.p_exact(X)
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
 
     mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 
@@ -330,6 +342,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 
     return y_coords, u_num_x, u_exact_x
 
+
 # =============================================================================
 # 4. EXPERIMENTAL CONVERGENCE PIPELINE
 # =============================================================================
@@ -344,7 +357,6 @@ def run_dlm_experiment_pipeline(
     dt: float = 0.5,
     output_dir: str = "results_dlm_buffer_recovery"
 ):
-    
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
@@ -360,7 +372,7 @@ def run_dlm_experiment_pipeline(
 
     for n in resolutions:
         print(f"\n---> Running DLM Resolution n = {n:3d} (h = {1.0/n:.4f}) ...")
-        uh, ph, lambda_h, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
+        uh, ph, mesh = solve_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
         y_pts, u_x_num, u_x_ex = extract_interface_profile(uh, mms)
@@ -375,7 +387,7 @@ def run_dlm_experiment_pipeline(
         print(f"     [DLM] L2(u) in Omega_0: {e_L2:.5e} | H1(u): {e_H1:.5e} | L2(p): {e_p:.5e} | Interface L2: {e_intf:.5e}")
 
         # Explicit cleanup per iteration
-        del uh, ph, lambda_h, mesh
+        del uh, ph, mesh
         gc.collect()
         PETSc.garbage_cleanup(PETSc.COMM_WORLD)
 
@@ -435,6 +447,7 @@ def run_dlm_experiment_pipeline(
     plt.savefig(conv_plot_path, dpi=300)
     plt.close(fig)
     print(f">> Saved DLM Convergence Plot: {conv_plot_path}")
+
     # Plot 2: Interface Velocity Cut Profile
     fig_prof, ax_prof = plt.subplots(figsize=(7, 6))
     fig_prof.suptitle("Interface Velocity Profile $u_x(0, y)$ Recovery via DLM", fontsize=12, fontweight='bold')
@@ -456,12 +469,12 @@ def run_dlm_experiment_pipeline(
     plt.close(fig_prof)
     print(f">> Saved DLM Interface Profile Plot: {prof_plot_path}")
 
+
 # =============================================================================
 # 5. ENTRY POINT
 # =============================================================================
 
 if __name__ == "__main__":
-
     run_dlm_experiment_pipeline(
         resolutions=[20, 30, 40, 50, 60],
         Lx=4.0,
