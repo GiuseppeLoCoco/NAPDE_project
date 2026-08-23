@@ -87,10 +87,10 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
     using the Brinkman_solver class.
     """
-    nx_buf = int(round(L_buf * n))
-    nx_phys = int(round(Lx * n))
+    nx_phys = n
+    nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
-    ny = int(round(Ly * n))
+    ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
     mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
@@ -181,14 +181,14 @@ def run_r_scaling_analysis(
     print("=" * 90)
 
     n_min = float(resolutions[0])
-    h_vals = [1.0 / n for n in resolutions]
+    h_vals = [Lx / n for n in resolutions]
     scaled_R_vals = [R_base * ((n / n_min) ** 2) for n in resolutions]
 
     errs_L2_u, errs_H1_u, errs_L2_p, errs_intf = [], [], [], []
     profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
 
     for n, R_val in zip(resolutions, scaled_R_vals):
-        print(f"\n---> Running n = {n:3d} (h = {1.0/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
+        print(f"\n---> Running n = {n:3d} (h = {Lx/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
         uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
@@ -206,78 +206,49 @@ def run_r_scaling_analysis(
         del uh, ph, mesh
         gc.collect()
         
-    # Compute convergence rates with respect to mesh size h
-    def compute_rates(err_list):
-        return [np.log(err_list[i] / err_list[i+1]) / np.log(h_vals[i] / h_vals[i+1]) for i in range(len(h_vals)-1)]
+    # -------------------------------------------------------------------------
+    # 4. PRINT CONVERGENCE SUMMARY TABLE (via experiment_plots module)
+    # -------------------------------------------------------------------------
+    from experiment_plots import (
+        print_strategy_b_table,
+        plot_strategy_b_spatial_convergence,
+        plot_interface_velocity_profile
+    )
 
-    rates_L2 = compute_rates(errs_L2_u)
-    rates_H1 = compute_rates(errs_H1_u)
-    rates_intf = compute_rates(errs_intf)
+    print_strategy_b_table(
+        resolutions=resolutions,
+        h_vals=h_vals,
+        scaled_R_vals=scaled_R_vals,
+        errs_L2_u=errs_L2_u,
+        errs_H1_u=errs_H1_u,
+        errs_intf=errs_intf
+    )
 
-    # Print Summary Table
-    print("\n" + "=" * 105)
-    print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'Scaled R':>12} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14}")
-    print("-" * 105)
-    for i, n in enumerate(resolutions):
-        r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
-        r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {scaled_R_vals[i]:12.2e} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e}")
-    print("=" * 105 + "\n")
+    # -------------------------------------------------------------------------
+    # 5. GENERATE COMPARISON PLOTS (via experiment_plots module)
+    # -------------------------------------------------------------------------
 
-    # Generate Log-Log Spatial Convergence Plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-    fig.suptitle("Strategy B: Spatial Convergence with Scaled Penalty $R(h) = R_0 \\cdot (h_0/h)^2$", fontsize=13, fontweight='bold')
-
-    h_arr = np.array(h_vals)
-    ax1.loglog(h_arr, errs_L2_u, 'o-', color='#1f77b4', linewidth=2, label='Velocity $L^2(\\Omega_0)$ Error')
-    ax1.loglog(h_arr, errs_H1_u, 's--', color='#ff7f0e', linewidth=1.8, label='Velocity $H^1(\\Omega_0)$ Error')
-    ax1.loglog(h_arr, errs_L2_u[0] * (h_arr / h_arr[0])**2, 'k:', alpha=0.6, label='Reference $O(h^2)$')
-    ax1.loglog(h_arr, errs_L2_u[0] * (h_arr / h_arr[0])**1, 'k--', alpha=0.6, label='Reference $O(h)$')
-    ax1.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax1.set_ylabel("Velocity Error Norms in $\\Omega_0$", fontsize=11)
-    ax1.set_title("Restricted Velocity Error vs $h$", fontsize=12, fontweight='bold')
-    ax1.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax1.legend(fontsize=9.5)
-
-    ax2.loglog(h_arr, errs_intf, 'd-', color='#d62728', linewidth=2, label='Interface Trace $L^2(\\Sigma)$ Error')
-    ax2.loglog(h_arr, errs_intf[0] * (h_arr / h_arr[0])**2, 'k:', alpha=0.6, label='Reference $O(h^2)$')
-    ax2.loglog(h_arr, errs_intf[0] * (h_arr / h_arr[0])**1, 'k--', alpha=0.6, label='Reference $O(h)$')
-    ax2.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax2.set_ylabel("Trace Error at Interface $\\Sigma$ ($x = 0$)", fontsize=11)
-    ax2.set_title("Dirichlet Interface Recovery vs $h$", fontsize=12, fontweight='bold')
-    ax2.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax2.legend(fontsize=9.5)
-
-    plt.tight_layout()
+    # Plot 1: Spatial Convergence Log-Log Plot
     plot_conv = os.path.join(output_dir, "strategy_B_spatial_convergence.png")
-    plt.savefig(plot_conv, dpi=300)
-    plt.close(fig)
-    print(f">> Saved Strategy B Convergence Plot: {plot_conv}")
+    plot_strategy_b_spatial_convergence(
+        h_vals=h_vals,
+        errs_L2_u=errs_L2_u,
+        errs_H1_u=errs_H1_u,
+        errs_intf=errs_intf,
+        output_path=plot_conv
+    )
 
-    # Generate Interface Profile Recovery Plot
-    fig_prof, ax_prof = plt.subplots(figsize=(7, 6))
-    fig_prof.suptitle("Interface Velocity Profile $u_x(0, y)$ Recovery with Scaled $R(h)$", fontsize=12, fontweight='bold')
-    
-    y_fine = np.linspace(0, Ly, 200)
-    ax_prof.plot(np.ones_like(y_fine), y_fine, 'k-', linewidth=2.5, label='Target $\\mathbf{u}_{ex}(0, y) = 1$')
-
-    colors = plt.cm.viridis(np.linspace(0.1, 0.95, len(resolutions)))
-    for idx, n in enumerate(resolutions):
-        y_p, u_p = profiles[n]
-        ax_prof.plot(u_p, y_p, '--', color=colors[idx], linewidth=1.6, label=f'$n={n}$ ($R={scaled_R_vals[idx]:.1e}$)')
-
-    ax_prof.set_xlabel("Horizontal Velocity $u_x(0, y)$", fontsize=11)
-    ax_prof.set_ylabel("Channel Height $y$", fontsize=11)
-    ax_prof.grid(True, linestyle="--", alpha=0.5)
-    ax_prof.legend(loc="upper right", fontsize=9)
-
-    plt.tight_layout()
+    # Plot 2: Interface Velocity Profile Recovery Plot
     plot_prof = os.path.join(output_dir, "strategy_B_interface_profile.png")
-    plt.savefig(plot_prof, dpi=300)
-    plt.close(fig_prof)
-    print(f">> Saved Strategy B Interface Profile Plot: {plot_prof}")
+    scaled_labels = [f"$n={n}$ ($R={scaled_R_vals[idx]:.1e}$)" for idx, n in enumerate(resolutions)]
+    plot_interface_velocity_profile(
+        profiles=profiles,
+        Ly=Ly,
+        keys=resolutions,
+        title="Interface Velocity Profile $u_x(0, y)$ Recovery with Scaled $R(h)$",
+        output_path=plot_prof,
+        custom_labels=scaled_labels
+    )
 
 
 # =============================================================================

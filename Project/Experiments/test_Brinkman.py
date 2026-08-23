@@ -108,10 +108,10 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
     """
     Solves extended problem on [-L_buf, Lx] x [0, Ly] using Brinkman_solver with BufferObstacle.
     """
-    nx_buf = int(round(L_buf * n))
-    nx_phys = int(round(Lx * n))
+    nx_phys = n
+    nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
-    ny = int(round(Ly * n))
+    ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
     mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
@@ -226,11 +226,11 @@ def run_experiment_pipeline(
     res_p2 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
     
     profiles_p2 = {}
-    h_vals = [1.0 / n for n in resolutions]
+    h_vals = [Lx / n for n in resolutions]
 
     # --- Loop of simulation on every resolution ---
     for n in resolutions:
-        print(f"\n---> Running Resolution n = {n} (h = {1.0/n:.4f})")
+        print(f"\n---> Running Resolution n = {n} (h = {Lx/n:.4f})")
         
         # 1. Phase 1: Conforming
         uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt)
@@ -255,97 +255,49 @@ def run_experiment_pipeline(
         res_p2["interf_L2"].append(e_interf_L2)
         print(f"  [Phase 2 Buffer Rec] L2(u): {e_L2_u2:.4e} | H1(u): {e_H1_u2:.4e} | L2(p): {e_L2_p2:.4e} | Intf_L2(x=0): {e_interf_L2:.4e}")
 
-    # --- Convergence rates ---
-    def compute_rates(err_list, h_list):
-        return [np.log(err_list[i] / err_list[i+1]) / np.log(h_list[i] / h_list[i+1]) for i in range(len(h_list)-1)]
+    # -------------------------------------------------------------------------
+    # 5. PRINT CONVERGENCE SUMMARY TABLES (via experiment_plots module)
+    # -------------------------------------------------------------------------
+    from experiment_plots import (
+        print_phase_comparison_tables,
+        plot_phase_comparison_loglog,
+        plot_interface_velocity_profile
+    )
 
-    rates_p1_L2 = compute_rates(res_p1["L2_u"], h_vals)
-    rates_p1_H1 = compute_rates(res_p1["H1_u"], h_vals)
-    rates_p2_L2 = compute_rates(res_p2["L2_u"], h_vals)
-    rates_p2_H1 = compute_rates(res_p2["H1_u"], h_vals)
+    print_phase_comparison_tables(
+        resolutions=resolutions,
+        h_vals=h_vals,
+        res_p1=res_p1,
+        res_p2=res_p2,
+        method_name="Brinkman"
+    )
 
-    # --- Tables ---
-    print("\n" + "=" * 85)
-    print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
-    print("=" * 85)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14}")
-    print("-" * 85)
-    for i, n in enumerate(resolutions):
-        r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if i > 0 else "   -- "
-        r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if i > 0 else "   -- "
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e}")
+    # -------------------------------------------------------------------------
+    # 6. GENERATE COMPARISON PLOTS (via experiment_plots module)
+    # -------------------------------------------------------------------------
 
-    print("\n" + "=" * 95)
-    print("Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA BRINKMAN (Restricted to Omega_0)")
-    print("=" * 95)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'Interface L2':>14}")
-    print("-" * 95)
-    for i, n in enumerate(resolutions):
-        r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if i > 0 else "   -- "
-        r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if i > 0 else "   -- "
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {res_p2['interf_L2'][i]:14.5e}")
-    print("=" * 95 + "\n")
-
-    # =========================================================================
-    # 6. Generate the plots to compare the solutions
-    # =========================================================================
-    
     # Figure 1: Convergence plot Log-Log
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-    fig.suptitle("Spatial Convergence: Pure Conforming vs Brinkman Buffer Recovery", fontsize=13, fontweight='bold')
-
-    # L2 Velocity Plot
-    ax1.loglog(h_vals, res_p1["L2_u"], 'o-', color='#1f77b4', linewidth=2, label='Phase 1: Conforming $L^2(\\mathbf{u})$')
-    ax1.loglog(h_vals, res_p2["L2_u"], 's--', color='#d62728', linewidth=2, label='Phase 2: Brinkman Buffer $L^2(\\mathbf{u})$')
-    ax1.loglog(h_vals, [res_p1["L2_u"][0] * (h / h_vals[0])**2 for h in h_vals], 'k:', alpha=0.6, label='Optimal $O(h^2)$')
-    ax1.loglog(h_vals, [res_p1["L2_u"][0] * (h / h_vals[0])**1 for h in h_vals], 'k--', alpha=0.6, label='Slope $O(h)$')
-    ax1.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax1.set_ylabel("Velocity $L^2$ Error in $\\Omega_0$", fontsize=11)
-    ax1.set_title("Velocity $L^2$ Error Norm", fontsize=12, fontweight='bold')
-    ax1.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax1.legend(fontsize=9.5)
-
-    # H1 Velocity Plot
-    ax2.loglog(h_vals, res_p1["H1_u"], 'o-', color='#1f77b4', linewidth=2, label='Phase 1: Conforming $H^1(\\mathbf{u})$')
-    ax2.loglog(h_vals, res_p2["H1_u"], 's--', color='#d62728', linewidth=2, label='Phase 2: Brinkman Buffer $H^1(\\mathbf{u})$')
-    ax2.loglog(h_vals, [res_p1["H1_u"][0] * (h / h_vals[0])**1 for h in h_vals], 'k--', alpha=0.6, label='Optimal $O(h)$')
-    ax2.set_xlabel("Mesh Size $h = 1/n$", fontsize=11)
-    ax2.set_ylabel("Velocity $H^1$ Error in $\\Omega_0$", fontsize=11)
-    ax2.set_title("Velocity $H^1$ Error Norm", fontsize=12, fontweight='bold')
-    ax2.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax2.legend(fontsize=9.5)
-
-    plt.tight_layout()
     conv_plot_path = os.path.join(output_dir, "convergence_comparison_loglog.png")
-    plt.savefig(conv_plot_path, dpi=300)
-    plt.close(fig)
-    print(f">> Saved Log-Log Convergence Plot: {conv_plot_path}")
+    plot_phase_comparison_loglog(
+        h_vals=h_vals,
+        res_p1=res_p1,
+        res_p2=res_p2,
+        method_name="Brinkman",
+        output_path=conv_plot_path
+    )
 
-    # FIGURE 2: Recovery of the velocity profile x = 0
-    fig, ax = plt.subplots(figsize=(7, 6))
-    fig.suptitle("Velocity Profile Recovery at Interface $\\Sigma$ ($x = 0$)", fontsize=12, fontweight='bold')
-    
-    y_fine = np.linspace(0, Ly, 200)
-    u_ex_line = np.ones_like(y_fine)  # target u_x at x=0 is 1.0
-    ax.plot(u_ex_line, y_fine, 'k-', linewidth=2.5, label='Target Dirichlet $\\mathbf{u}_{ex}(0,y) = 1.0$')
-
-    colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(resolutions)))
-    for idx, n in enumerate(resolutions):
-        y_p, u_p = profiles_p2[n]
-        ax.plot(u_p, y_p, '--', color=colors[idx], linewidth=1.8, label=f'Brinkman Rec. (n={n})')
-
-    ax.set_xlabel("Horizontal Velocity $u_x(0, y)$", fontsize=11)
-    ax.set_ylabel("Channel Height $y$", fontsize=11)
-    ax.set_xlim(0.8, 1.2)
-    ax.set_ylim(0, Ly)
-    ax.grid(True, linestyle="--", alpha=0.5)
-    ax.legend(loc="upper right", fontsize=9.5)
-
-    plt.tight_layout()
+    # Figure 2: Recovery of the velocity profile x = 0
     profile_plot_path = os.path.join(output_dir, "interface_velocity_recovery.png")
-    plt.savefig(profile_plot_path, dpi=300)
-    plt.close(fig)
-    print(f">> Saved Interface Profile Recovery Plot: {profile_plot_path}")
+    brinkman_labels = [f"Brinkman Rec. (n={n})" for n in resolutions]
+    plot_interface_velocity_profile(
+        profiles=profiles_p2,
+        Ly=Ly,
+        keys=resolutions,
+        title="Velocity Profile Recovery at Interface $\\Sigma$ ($x = 0$)",
+        output_path=profile_plot_path,
+        custom_labels=brinkman_labels,
+        xlim=(0.8, 1.2)
+    )
 
 
 # =============================================================================

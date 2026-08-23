@@ -86,10 +86,10 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with Brinkman penalization
     using the Brinkman_solver class.
     """
-    nx_buf = int(round(L_buf * n))
-    nx_phys = int(round(Lx * n))
+    nx_phys = n
+    nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
-    ny = int(round(Ly * n))
+    ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
     mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
@@ -175,7 +175,7 @@ def run_r_sweep_analysis(
 
     print("=" * 90)
     print("STRATEGY A: PENALTY PARAMETER SWEEP (R-SWEEP AT FIXED MESH RESOLUTION)")
-    print(f"Fixed Mesh Resolution: n = {fixed_n} (h = {1.0/fixed_n:.4f}) | Re = {Re}")
+    print(f"Fixed Mesh Resolution: n = {fixed_n} (h = {Lx/fixed_n:.4f}) | Re = {Re}")
     print(f"Brinkman Resistance Range R: {R_values}")
     print(f"Simulation Time: T = {T_end}s (dt = {dt}s)")
     print("=" * 90)
@@ -202,74 +202,48 @@ def run_r_sweep_analysis(
         del uh, ph, mesh
         gc.collect()
 
-    # Compute convergence rates with respect to 1/R
-    rates_L2 = [np.log(errs_L2_u[i] / errs_L2_u[i+1]) / np.log(R_values[i+1] / R_values[i]) for i in range(len(R_values)-1)]
-    rates_intf = [np.log(errs_intf[i] / errs_intf[i+1]) / np.log(R_values[i+1] / R_values[i]) for i in range(len(R_values)-1)]
+    # -------------------------------------------------------------------------
+    # 4. PRINT CONVERGENCE SUMMARY TABLE (via experiment_plots module)
+    # -------------------------------------------------------------------------
+    from experiment_plots import (
+        print_strategy_a_table,
+        plot_strategy_a_r_sweep,
+        plot_interface_velocity_profile
+    )
 
-    # Print Summary Table
-    print("\n" + "=" * 95)
-    print("CONVERGENCE SUMMARY TABLE: ERROR AS A FUNCTION OF BRINKMAN PENALTY (R)")
-    print("=" * 95)
-    print(f"{'R Penalty':>12} | {'L2(u) Err (Omega_0)':>20} | {'Rate(1/R)':>10} | {'Interface L2 Err':>18} | {'Rate(1/R)':>10}")
-    print("-" * 95)
-    for i, R_val in enumerate(R_values):
-        r_l2_str = f"{rates_L2[i-1]:+7.3f}" if i > 0 else "      --"
-        r_intf_str = f"{rates_intf[i-1]:+7.3f}" if i > 0 else "      --"
-        print(f"{R_val:12.1e} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_intf[i]:18.5e} | {r_intf_str}")
-    print("=" * 95 + "\n")
+    print_strategy_a_table(
+        R_values=R_values,
+        errs_L2_u=errs_L2_u,
+        errs_intf=errs_intf
+    )
 
-    # Generate Error vs R Plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-    fig.suptitle(f"Strategy A: Asymptotic Modeling Error vs Penalty $R$ ($n = {fixed_n}$)", fontsize=13, fontweight='bold')
+    # -------------------------------------------------------------------------
+    # 5. GENERATE COMPARISON PLOTS (via experiment_plots module)
+    # -------------------------------------------------------------------------
 
-    R_arr = np.array(R_values)
-    ax1.loglog(R_arr, errs_L2_u, 'o-', color='#1f77b4', linewidth=2, label='Velocity $L^2(\\Omega_0)$ Error')
-    ax1.loglog(R_arr, errs_H1_u, 's--', color='#ff7f0e', linewidth=1.8, label='Velocity $H^1(\\Omega_0)$ Error')
-    ax1.loglog(R_arr, errs_L2_p, '^:', color='#2ca02c', linewidth=1.8, label='Pressure $L^2(\\Omega_0)$ Error')
-    ax1.loglog(R_arr, errs_L2_u[0] * (R_arr[0] / R_arr)**0.5, 'k--', alpha=0.5, label='Asymptotic $O(R^{-1/2})$')
-    ax1.loglog(R_arr, errs_L2_u[0] * (R_arr[0] / R_arr)**1.0, 'k:', alpha=0.5, label='Asymptotic $O(R^{-1})$')
-    ax1.set_xlabel("Brinkman Penalty Parameter $R$", fontsize=11)
-    ax1.set_ylabel("Error Norms in Physical Domain $\\Omega_0$", fontsize=11)
-    ax1.set_title("Modeling Error in $\\Omega_0$ vs $R$", fontsize=12, fontweight='bold')
-    ax1.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax1.legend(fontsize=9)
-
-    ax2.loglog(R_arr, errs_intf, 'd-', color='#d62728', linewidth=2, label='Interface Trace $L^2(\\Sigma)$ Error')
-    ax2.loglog(R_arr, errs_intf[0] * (R_arr[0] / R_arr)**0.5, 'k--', alpha=0.5, label='Asymptotic $O(R^{-1/2})$')
-    ax2.loglog(R_arr, errs_intf[0] * (R_arr[0] / R_arr)**1.0, 'k:', alpha=0.5, label='Asymptotic $O(R^{-1})$')
-    ax2.set_xlabel("Brinkman Penalty Parameter $R$", fontsize=11)
-    ax2.set_ylabel("Trace Error at Interface $\\Sigma$ ($x = 0$)", fontsize=11)
-    ax2.set_title("Dirichlet Recovery Error vs $R$", fontsize=12, fontweight='bold')
-    ax2.grid(True, which="both", linestyle="--", alpha=0.5)
-    ax2.legend(fontsize=9)
-
-    plt.tight_layout()
+    # Plot 1: Error vs R
     plot_conv = os.path.join(output_dir, "strategy_A_error_vs_R.png")
-    plt.savefig(plot_conv, dpi=300)
-    plt.close(fig)
-    print(f">> Saved Strategy A Error Plot: {plot_conv}")
+    plot_strategy_a_r_sweep(
+        R_values=R_values,
+        errs_L2_u=errs_L2_u,
+        errs_H1_u=errs_H1_u,
+        errs_L2_p=errs_L2_p,
+        errs_intf=errs_intf,
+        fixed_n=fixed_n,
+        output_path=plot_conv
+    )
 
-    # Generate Interface Profile Recovery Plot
-    fig_prof, ax_prof = plt.subplots(figsize=(7, 6))
-    fig_prof.suptitle(f"Interface Velocity Profile $u_x(0, y)$ vs $R$ ($n = {fixed_n}$)", fontsize=12, fontweight='bold')
-    
-    y_fine = np.linspace(0, Ly, 200)
-    ax_prof.plot(np.ones_like(y_fine), y_fine, 'k-', linewidth=2.5, label='Target $\\mathbf{u}_{ex}(0, y) = 1$')
-    colors = plt.cm.viridis(np.linspace(0.1, 0.95, len(R_values)))
-    for idx, R_val in enumerate(R_values):
-        y_p, u_p = profiles[R_val]
-        ax_prof.plot(u_p, y_p, '--', color=colors[idx], linewidth=1.6, label=f'$R = 10^{{{int(math.log10(R_val))}}}$')
-
-    ax_prof.set_xlabel("Horizontal Velocity $u_x(0, y)$", fontsize=11)
-    ax_prof.set_ylabel("Channel Height $y$", fontsize=11)
-    ax_prof.grid(True, linestyle="--", alpha=0.5)
-    ax_prof.legend(loc="upper right", fontsize=9)
-
-    plt.tight_layout()
+    # Plot 2: Interface Velocity Profile vs R
     plot_prof = os.path.join(output_dir, "strategy_A_interface_profile.png")
-    plt.savefig(plot_prof, dpi=300)
-    plt.close(fig_prof)
-    print(f">> Saved Strategy A Interface Profile Plot: {plot_prof}")
+    r_labels = [f"$R = 10^{{{int(math.log10(r))}}}$" for r in R_values]
+    plot_interface_velocity_profile(
+        profiles=profiles,
+        Ly=Ly,
+        keys=R_values,
+        title=f"Interface Velocity Profile $u_x(0, y)$ vs $R$ ($n = {fixed_n}$)",
+        output_path=plot_prof,
+        custom_labels=r_labels
+    )
 
 
 # =============================================================================
