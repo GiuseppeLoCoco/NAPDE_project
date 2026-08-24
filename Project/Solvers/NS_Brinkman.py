@@ -14,8 +14,7 @@ import user_inputs.user_parameters as user_parameters
 from domain_settings import create_bcs_penalty, time_varying_bc
 from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
-
-from Solvers.Stokes_Brinkman import solve_stokes_brinkman_initial
+from Solvers.Stokes_solver import solve_stokes_initial
 
 class Brinkman_solver:
 
@@ -193,11 +192,9 @@ class Brinkman_solver:
             else:
                 uh_n.assign(u_init)
         else:
-            print("Initializing velocity with stationary Stokes Brinkman solver (t=0)...")
-            uh_stokes, _ = solve_stokes_brinkman_initial(
-                mesh=mesh, W=W, obstacle=self.obstacle,
-                type_obstacle=self.type_obstacle, n=self.n, Re=self.Re, R=self.R,
-                f_custom=f_custom, u_exact=u_exact, p_exact=p_exact, g_custom=g_custom
+            print("Initializing velocity with stationary Stokes solver (t=0)...")
+            uh_stokes, _ = solve_stokes_initial(
+                mesh=mesh, bcs=bcs, mu=mu, f_custom=f_custom, g_custom=g_custom, W=W
             )
             uh_n.assign(uh_stokes)
 

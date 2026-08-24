@@ -6,12 +6,7 @@ class FSIInterpolation:
         self.solid_space = None
         self.h = None
 
-    def create_bounding_box(self, mesh):
-        pass
-
-    def calculate_fluid_mesh_size_h(self, mesh):
-        pass
-
+    
     def extract_dof_component_map_user(self, space, flag):
         if flag == "F":
             self.fluid_space = space

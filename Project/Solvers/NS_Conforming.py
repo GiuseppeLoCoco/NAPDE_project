@@ -16,6 +16,7 @@ from domain_settings.boundary_conditions import create_bcs_conforming, time_vary
 from domain_settings.obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
 from domain_settings.mesh_settings import conforming_mesh
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
+from Solvers.Stokes_solver import solve_stokes_initial
 
 class Conforming_solver:
     def __init__(self, moving=False, type_obstacle="square", n=None, Re=None):
@@ -164,21 +165,11 @@ class Conforming_solver:
             else:
                 uh_n.assign(u_init)
         else:
-            print("Initializing velocity with stationary Stokes Conforming solver (t=0)...")
-            a_stokes = 2.0 * Constant(mu) * inner(sym(grad(u)), sym(grad(v))) * dx \
-                - div(v) * p * dx \
-                + div(u) * q * dx
-            L_stokes = inner(f, v) * dx
-            if g_ex_val is not None:
-                ds_b = Measure("ds", domain=mesh)
-                L_stokes += inner(g_ex_val, v) * ds_b(2)
-
-            solve(a_stokes == L_stokes, sol, bcs=bcs, solver_parameters={
-                'ksp_type': 'preonly',
-                'pc_type': 'lu',
-                'pc_factor_mat_solver_type': 'mumps'
-            })
-            uh_n.assign(uh)
+            print("Initializing velocity with stationary Stokes solver (t=0)...")
+            uh_stokes, _ = solve_stokes_initial(
+                mesh=mesh, bcs=bcs, mu=mu, f_custom=f_custom, g_custom=g_custom, W=W
+            )
+            uh_n.assign(uh_stokes)
 
         uh.assign(uh_n)
 

@@ -389,9 +389,9 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [50,75,100, 125,150]        # Mesh refinement levels n to simulate
+    resolutions = [40, 80, 120, 160]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                     # "square" or "cylinder" (both stationary/fixed)
-    solver_type = "dlm"                          # "Brinkman" or "dlm"
+    solver_type = "Brinkman"                          # "Brinkman" or "dlm"
     Re = 40.0                                    # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
     refinement_conforming = 200                # Exact conforming reference mesh refinement
     R_penalty = 100000.0                         # Resistive parameter R (for Brinkman solver)

@@ -257,7 +257,7 @@ def run_r_scaling_analysis(
 
 if __name__ == "__main__":
     run_r_scaling_analysis(
-        resolutions=[20, 30, 40, 50, 60],
+        resolutions=[50 ,75, 100, 125],
         R_base=1.0e3,
         Lx=4.0,
         Ly=1.0,
