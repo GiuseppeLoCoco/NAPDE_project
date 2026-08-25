@@ -1,576 +1,322 @@
+"""
+Convergence analysis script for stationary flow past obstacle (Square or Cylinder).
+
+Features:
+  - User-configurable parameters set directly at the top of the file / __main__ block.
+  - Runs/checks Conforming reference simulation for refinement `refinement_conforming`.
+  - Performs a `for n in resolutions:` loop executing the specified solver (Brinkman or DLM).
+  - Loads the saved checkpoint solutions at final time t = T_end.
+  - Calculates fluid-restricted velocity (L2, H1) errors and pressure L2 error.
+  - Calculates empirical convergence rates and plots log-log error curves vs mesh size h = 1/n.
+"""
+
 import os
+import sys
 import math
+import warnings
+from typing import Dict, List, Tuple, Optional
+
 import numpy as np
 import matplotlib.pyplot as plt
-from firedrake import (Mesh, FunctionSpace, Function, VectorFunctionSpace, PointEvaluator,
-    CheckpointFile, Constant, project, assemble, dx, inner, grad, sqrt, FILE_READ)
-import warnings
+
+from firedrake import (Constant, project, assemble, dx, inner, grad, sqrt,
+                        CheckpointFile)
+
+# Ensure Project directory is in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+if project_dir not in sys.path:
+    sys.path.append(project_dir)
+
+"""
+for p in [project_dir, os.path.join(project_dir, "domain_settings"), 
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+    if p not in sys.path:
+        sys.path.append(p)
+"""
+
+from domain_settings.obstacles import circleObstacle, squareObstacle
+from user_inputs.user_parameters import x_obs, y_obs, r_obs, side_length, Lx, Ly
+
+from Solvers.NS_Conforming import Conforming_solver
+from Solvers.NS_Brinkman import Brinkman_solver
+from Solvers.NS_DLM_simple import NS_DLM_Solver
+from validation.checkpoint_loader import get_case_directory, get_field_filepath, load_hdf5_solution
+from validation.validation_plots import plot_spatial_convergence_summary
+
 
 # =============================================================================
-# 1. POST-PROCESSING & ANALYSIS CLASSES
+# 2. ERROR COMPUTATION RESTRICTED TO FLUID DOMAIN
 # =============================================================================
 
-class ConvergenceAnalyzer:
+def compute_fluid_errors_velocity(u_ex, u_h, obstacle_instance, t_val: float) -> Tuple[float, float]:
+    """Computes L2 and H1 velocity error norms strictly inside the fluid domain (1 - chi)."""
+    V_ex = u_ex.function_space()
+    mesh_ex = V_ex.mesh()
+    t_const = Constant(t_val)
 
-    def __init__(self, obstacle_instance, Ly=1.0):
-        """
-        Handles convergence analysis and profile extraction for fluid subdomains.
-        """
-        self.obstacle = obstacle_instance
-        self.Ly = Ly
+    u_h_proj = project(u_h, V_ex)
 
-    def compute_fluid_errors(self, u_ex, u_h, t_val):
-        """
-        Computes L2 and H1 error norms strictly within the fluid domain
-        by masking the solid domain.
-        """
-        V_ex = u_ex.function_space()
-        mesh_ex = V_ex.mesh()
-        t_const = Constant(t_val)
+    chi_solid = obstacle_instance.chi(mesh_ex, t_const)
+    mask_fluid = 1.0 - chi_solid
 
-        # Project approximate solution onto the exact (conforming) space
-        # Note: In HPC applications, pre-allocating u_h_proj is preferred.
-        u_h_proj = project(u_h, V_ex)
+    err = u_h_proj - u_ex
 
-        # Fluid mask (1 in fluid, 0 in solid)
-        chi_solid = self.obstacle.chi(mesh_ex, t_const)
-        mask_fluid = 1.0 - chi_solid
+    err_L2_sq = assemble(mask_fluid * inner(err, err) * dx)
+    err_H1_sq = assemble(mask_fluid * (inner(err, err) + inner(grad(err), grad(err))) * dx)
 
-        # Error field
-        err = u_h_proj - u_ex
-
-        # Assemble masked errors
-        err_L2_sq = assemble(mask_fluid * inner(err, err) * dx)
-        err_H1_sq = assemble(mask_fluid * (inner(err, err) + inner(grad(err), grad(err))) * dx)
-
-        return sqrt(err_L2_sq), sqrt(err_H1_sq)
-
-    def extract_vertical_profile(self, u_h, t_val, num_points=200):
-        """
-        Extracts velocity magnitude profile along a vertical line passing through
-        the cylinder's center. Accounts for rigid-body velocity inside conforming holes.
-        """
-        # Calculate cylinder center X-coordinate via pure Python math
-        displ_x = self.obstacle.amplitude * 0.5 * (1.0 - math.cos(0.2 * math.pi * t_val))
-        x_c = self.obstacle.x_obs + displ_x
-
-        # Calculate prescribed solid velocity component (dx/dt)
-        # x(t) = x_0 + A/2 * (1 - cos(omega*t)) -> v(t) = A/2 * omega * sin(omega*t)
-        v_solid_x = self.obstacle.amplitude * 0.5 * (0.2 * math.pi) * math.sin(0.2 * math.pi * t_val)
-
-        y_coords = np.linspace(1e-5, self.Ly - 1e-5, num_points)
-        u_mag = np.zeros_like(y_coords)
-
-        for i, y in enumerate(y_coords):
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", FutureWarning)
-                    val = u_h.at([x_c, y], tolerance=1e-6)
-                u_mag[i] = math.sqrt(val[0]**2 + val[1]**2)
-            except Exception:
-                # Punto dentro il foro della mesh conforming → velocità rigida
-                u_mag[i] = abs(v_solid_x)
-
-        return y_coords, u_mag
-
-    def compute_pressure_error_L2(self, p_ex, p_h, t_val):
-        """
-        Computes L2 error norm for pressure within the fluid domain at a given instant.
-        """
-        V_ex = p_ex.function_space()
-        mesh_ex = V_ex.mesh()
-        t_const = Constant(t_val)
-
-        p_h_proj = project(p_h, V_ex)
-
-        chi_solid = self.obstacle.chi(mesh_ex, t_const)
-        mask_fluid = 1.0 - chi_solid
-
-        # Opzionale: rimozione del valore medio nel fluido per la pressione
-        vol_fluid = assemble(mask_fluid * dx(domain=mesh_ex))
-        mean_p_ex = assemble(mask_fluid * p_ex * dx) / vol_fluid
-        mean_p_h = assemble(mask_fluid * p_h_proj * dx) / vol_fluid
-
-        err_p = (p_h_proj - mean_p_h) - (p_ex - mean_p_ex)
-
-        err_p_L2_sq = assemble(mask_fluid * inner(err_p, err_p) * dx)
-        return sqrt(err_p_L2_sq)
+    return sqrt(err_L2_sq), sqrt(err_H1_sq)
 
 
-# OUTPUT DIRECTORY SETUP
+def compute_fluid_error_pressure(p_ex, p_h, obstacle_instance, t_val: float) -> float:
+    """Computes L2 pressure error norm in fluid domain (with mean pressure removed)."""
+    V_ex = p_ex.function_space()
+    mesh_ex = V_ex.mesh()
+    t_const = Constant(t_val)
 
-def setup_output_dirs(base_output_dir):
+    p_h_proj = project(p_h, V_ex)
+
+    chi_solid = obstacle_instance.chi(mesh_ex, t_const)
+    mask_fluid = 1.0 - chi_solid
+
+    vol_fluid = assemble(mask_fluid * dx(domain=mesh_ex))
+    mean_p_ex = assemble(mask_fluid * p_ex * dx) / vol_fluid
+    mean_p_h = assemble(mask_fluid * p_h_proj * dx) / vol_fluid
+
+    err_p = (p_h_proj - mean_p_h) - (p_ex - mean_p_ex)
+    err_p_L2_sq = assemble(mask_fluid * inner(err_p, err_p) * dx)
+
+    return sqrt(err_p_L2_sq)
+
+
+def extract_vertical_profile(u_field, x_eval: float, Ly_val: float, num_points: int = 250) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Crea la struttura di cartelle per i risultati:
-      results/
-        plots/
-          profiles/
-          convergence/
-        data/
+    Extracts velocity magnitude profile along a vertical line at x = x_eval.
+    If a point falls inside a conforming mesh void, it defaults to 0.0 (no-slip rigid velocity).
     """
-    dirs = {
-        "root":       base_output_dir,
-        "plots":      os.path.join(base_output_dir, "plots"),
-        "profiles":   os.path.join(base_output_dir, "plots", "profiles"),
-        "conv_plots": os.path.join(base_output_dir, "plots", "convergence"),
-        "data":       os.path.join(base_output_dir, "data"),
-    }
-    for d in dirs.values():
-        os.makedirs(d, exist_ok=True)
-    print(f">> Output directory: {base_output_dir}")
-    return dirs
+    y_coords = np.linspace(1e-5, Ly_val - 1e-5, num_points)
+    u_mag = np.zeros_like(y_coords)
+
+    for i, y in enumerate(y_coords):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                val = u_field.at([x_eval, y], tolerance=1e-6)
+            u_mag[i] = math.sqrt(val[0]**2 + val[1]**2)
+        except Exception:
+            # Point is inside the void of a conforming mesh
+            u_mag[i] = 0.0
+
+    return y_coords, u_mag
+
 
 # =============================================================================
-# 2. DATA LOADING & PIPELINE AUTOMATION
+# 3. MAIN SIMULATION & CONVERGENCE LOOP
 # =============================================================================
 
-def load_hdf5_solution(checkpoint_path, field_name="velocity"):
+def run_convergence_analysis(
+    resolutions: List[int],
+    obstacle_type: str,
+    solver_type: str,
+    Re: float,
+    refinement_conforming: int,
+    R_penalty: float = 1000.0,
+    dt: Optional[float] = None,
+    t_final: float = 20.0,
+    t_final_conforming: Optional[float] = None
+):
     """
-    Loads a saved Firedrake function from a DumbCheckpoint .h5 file.
+    Executes simulations for each resolution n, loads saved results,
+    computes L2/H1 errors, prints convergence rates, and plots log-log graphs.
     """
-    # Stripping the .h5 extension if Firedrake's DumbCheckpoint appends it automatically
-    if checkpoint_path.endswith(".h5"):
-        checkpoint_path = checkpoint_path[:-3]
 
-    if not checkpoint_path.endswith(".h5"):
-        checkpoint_path = checkpoint_path + ".h5"
+    # Instantiate obstacle object
+    if obstacle_type.lower() == "square":
+        obstacle_instance = squareObstacle(x_obs, y_obs, side_length)
+    elif obstacle_type.lower() == "cylinder":
+        obstacle_instance = circleObstacle(x_obs, y_obs, r_obs)
+    else:
+        raise ValueError(f"Unsupported obstacle type '{obstacle_type}'. Choose 'square' or 'cylinder'.")
 
-    with CheckpointFile(checkpoint_path, 'r') as chk:
-        mesh = chk.load_mesh()          # carica la mesh salvata nel file
-        u = chk.load_function(mesh, field_name)   # carica il campo per nome
+    t_conf = t_final_conforming if t_final_conforming is not None else t_final
 
-    return u
+    print("\n" + "=" * 75)
+    print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re})")
+    print(f" Refinements n: {resolutions}")
+    print(f" Conforming reference n: {refinement_conforming} (at t = {t_conf:.2f}s)")
+    if dt is not None:
+        print(f" Time step dt: {dt}")
+    print(f" Final time t_final ({solver_type.upper()}): {t_final:.2f}s")
+    if solver_type.lower() == "brinkman":
+        print(f" Brinkman Resistance R: {R_penalty}")
+    print("=" * 75 + "\n")
 
+    # -------------------------------------------------------------------------
+    # STEP 1: CONFORMING REFERENCE SIMULATION
+    # -------------------------------------------------------------------------
+    conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
+    conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
+    conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
 
-def run_pipeline(base_dir, obstacle_model, output_dir="results"):
-    """
-    Automates directory traversal, error assessment, and plotting.
-    """
-    analyzer = ConvergenceAnalyzer(obstacle_model)
-    dirs = setup_output_dirs(output_dir)
+    if not os.path.exists(conf_vel_file):
+        print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s)...")
+        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
+        conf_solver.conforming_solve(dt=dt, t_final=t_conf)
+        conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
+        conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
+        conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
+    else:
+        print(f">> Loaded existing Conforming reference solution (t = {t_conf:.2f}s) from: {conf_vel_file}")
 
-    # Simulation parameters
-    t_start, t_end, dt = 0.5, 10.0, 0.5
-    time_steps = np.arange(t_start, t_end + dt, dt)
-    resolutions = [50, 100, 150]
-    methods = ["Brinkman-Cylinder", "Brinkman-Square", "DLM-Cylinder", "DLM-Square"]
-    
-    # Data storage structure
-    results = {method: {n: {"L2": [], "H1": []} for n in resolutions} for method in methods}
-    pressure_results_final = {method: {n: float('nan') for n in resolutions} for method in methods}
-    profiles = {method: {} for method in methods}
-    y_ref    = None
-    u_ref    = None
+    u_ex = load_hdf5_solution(conf_vel_file, "velocity")
+    p_ex = load_hdf5_solution(conf_pres_file, "pressure") if os.path.exists(conf_pres_file) else None
 
-    print(">> Starting Spatial Convergence Analysis...")
-    print(f"   Time steps: {len(time_steps)} | Resolutions: {resolutions}\n")
+    # Reference vertical profile
+    y_ref, u_mag_ref = extract_vertical_profile(u_ex, x_obs, Ly)
 
-    # Time-loop processing
-    for t in time_steps:
-        t_str = f"{t:.2f}"
-        print(f" Processing Time Step: t = {t_str}s")
-        
-        # 1. Load Reference Conforming Solution
-        # Reflecting directory structure: Penalty - RIIS&Brinkman/src/cyl/conforming/moving/n70/
-        conf_dir = os.path.join(base_dir, "src", "cyl", "conforming", "moving", "n70", "velocity")
-        conf_file = os.path.join(conf_dir, f"velocity_t={t_str}.h5") 
-        
-        if not os.path.exists(conf_file):
-            print(f" [Warning] Conforming reference missing at t={t}. Skipping.")
-            continue
-            
-        u_ex = load_hdf5_solution(conf_file, "velocity")
+    # -------------------------------------------------------------------------
+    # STEP 2: LOOP FOR EACH RESOLUTION n (SIMULATION + ERROR CALCULATION)
+    # -------------------------------------------------------------------------
+    err_L2_u = []
+    err_H1_u = []
+    err_L2_p = []
+    profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    R_values_used: Dict[int, float] = {}
 
-        # 2. Load Penalty Solutions and compute instantaneous errors
-        for method in methods:
-            for n in resolutions:
-                # Folder match: src/cyl/brinkman/moving/n25_R1000.0/ (or similar)
-                # Adjust string formatting based on your exact filename convention
-                sim_folder = f"n{n}_R1000.0" 
-                chk_dir = os.path.join(base_dir, "src", "cyl", method, "moving", sim_folder, "velocity")
-                chk_file = os.path.join(chk_dir, f"velocity_t={t_str}.h5")
+    n_min = min(resolutions)
 
-                if os.path.exists(chk_file):
-                    u_h = load_hdf5_solution(chk_file, "velocity")
-                    
-                    # Error evaluation
-                    err_L2, err_H1 = analyzer.compute_fluid_errors(u_ex, u_h, t)
-                    results[method][n]["L2"].append(err_L2)
-                    results[method][n]["H1"].append(err_H1)
-                    
-                    # Store profiles at the final time step for comparison
-                    if abs(t - t_end) < 1e-5:
-                        y_p, u_p = analyzer.extract_vertical_profile(u_h, t)
-                        profiles[method][n] = (y_p, u_p)
-                else:
-                    print(f" [Warning] Missing penalty file: {chk_file}")
-                    # Append NaN to avoid alignment issues if a file is missing
-                    results[method][n]["L2"].append(float('nan'))
-                    results[method][n]["H1"].append(float('nan'))
+    for n in resolutions:
 
-        # Reference profile at final time step
-        if abs(t - t_end) < 1e-5:
-            y_ref, u_ref = analyzer.extract_vertical_profile(u_ex, t)
+        print("\n" + "-" * 60)
+        print(f" Running {solver_type} simulation for resolution n = {n} ...")
+        print("-" * 60)
 
-            # Carica pressione di riferimento conforme
-            conf_p_dir = os.path.join(base_dir, "src", "cyl", "conforming", "moving", "n70", "pressure")
-            conf_p_file = os.path.join(conf_p_dir, f"pressure_t={t_str}.h5")
-            p_ex = load_hdf5_solution(conf_p_file, "pressure")
-            
-            y_ref, u_ref = analyzer.extract_vertical_profile(u_ex, t)
+        # 1. Run specified solver
+        if solver_type.lower() == "brinkman":
+            solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+            solver.Brinkman_solve(dt=dt, t_final=t_final)
+            case_name = "Brinkman"
+        elif solver_type.lower() in ("dlm", "ns_dlm"):
+            solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
+            solver.NS_DLM_Solve(dt=dt, t_final=t_final)
+            case_name = "DLM"
+        else:
+            raise ValueError(f"Unknown solver type '{solver_type}'. Must be 'Brinkman' or 'dlm'.")
 
-            for method in methods:
-                for n in resolutions:
-                    chk_p_dir = os.path.join(base_dir, "src", "cyl", method, "moving", f"n{n}_R1000.0", "pressure")
-                    chk_p_file = os.path.join(chk_p_dir, f"pressure_t={t_str}.h5")
-                    
-                    if os.path.exists(chk_p_file):
-                        p_h = load_hdf5_solution(chk_p_file, "pressure")
-                        # Calcolo errore pressione a t = T
-                        err_p_L2 = analyzer.compute_pressure_error_L2(p_ex, p_h, t)
-                        # Salva err_p_L2 in una struttura dati dedicata alla pressione
-                        pressure_results_final[method][n] = err_p_L2
-                        results[method][n]["p_L2"].append(err_p_L2)
-                    else:
-                        print(f" [Warning] Missing pressure penalty file: {chk_p_file}")
-                        results[method][n]["p_L2"].append(float('nan'))
-            else:
-                print(f" [Warning] Conforming pressure reference missing at t={t_end}.")
-        print()
+        # 2. Get output directory & load saved checkpoint data
+        case_dir = get_case_directory(case_name, obstacle_type, Re, n, R_penalty)
+        vel_file = get_field_filepath(case_dir, "velocity", t_final)
+        pres_file = get_field_filepath(case_dir, "pressure", t_final)
 
-    # =============================================================================
-    # 3. CONVERGENCE RATE & PLOTTING STAGE
-    # =============================================================================
-    print("\n>> Computing Global Bochner Norms & Convergence Orders:")
+        print(f" Loading solution at t = {t_final:.2f}s from: {vel_file}")
+        u_h = load_hdf5_solution(vel_file, "velocity")
 
-    summary = {}
-    
-    for method in methods:
-        print(f"\n{'='*50}")
-        print(f"\n--- Method: {method.upper()} ---")
-        print(f"{'='*50}")
-        # Compute discrete L2(0,T; L2) spatio-temporal error
-        errors_L2_T = []
-        errors_H1_T = []
-        errors_p_final = []
-        dx_h = [1.0/n for n in resolutions] # Characteristic mesh sizes
-        
-        for n in resolutions:
-            l2_arr = np.array(results[method][n]["L2"])
-            h1_arr = np.array(results[method][n]["H1"])
+        # 3. Compute fluid errors
+        e_L2_u, e_H1_u = compute_fluid_errors_velocity(u_ex, u_h, obstacle_instance, t_final)
+        err_L2_u.append(float(e_L2_u))
+        err_H1_u.append(float(e_H1_u))
 
-            mask = ~np.isnan(l2_arr)
-            if not np.any(mask):
-                print(f" Mesh n={n:2d} | No valid data steps found.")
-                errors_L2_T.append(float('nan'))
-                errors_H1_T.append(float('nan'))
-                errors_p_final.append(float('nan'))
-                continue
-            
-            valid_times = time_steps[mask]
-            # Integration over time via Trapezoidal rule (Bochner Norm)
-            bochner_L2 = sqrt(np.trapezoid(l2_arr[mask]**2, valid_times))
-            bochner_H1 = sqrt(np.trapezoid(h1_arr[mask]**2, valid_times))
-            errors_L2_T.append(bochner_L2)
-            errors_H1_T.append(bochner_H1)
+        if p_ex is not None and os.path.exists(pres_file):
+            p_h = load_hdf5_solution(pres_file, "pressure")
+            e_L2_p = compute_fluid_error_pressure(p_ex, p_h, obstacle_instance, t_final)
+            err_L2_p.append(float(e_L2_p))
+        else:
+            err_L2_p.append(float('nan'))
 
-            err_p_T = pressure_results_final[method][n]
-            errors_p_final.append(err_p_T)
-            
-            print(f" Mesh n={n:2d} | Bochner L2 Error: {bochner_L2:.5e} | Bochner H1 Error: {bochner_H1:.5e} | Pressure L2 (t=T): {err_p_T:.5e}")
+        # 4. Vertical profile extraction
+        profiles[n] = extract_vertical_profile(u_h, x_obs, Ly)
 
-        print()
-        rates_L2 = []
-        rates_H1 = []
-        rates_p  = []
+        print(f"   --> n={n:3d} | Error L2(u) = {e_L2_u:.5e} | Error H1(u) = {e_H1_u:.5e} | Error L2(p) = {err_L2_p[-1]:.5e}")
 
-        for i in range(len(resolutions) - 1):
-            e1_L2, e2_L2 = errors_L2_T[i], errors_L2_T[i+1]
-            e1_H1, e2_H1 = errors_H1_T[i], errors_H1_T[i+1]
-            e1_p,  e2_p  = errors_p_final[i], errors_p_final[i+1]
+    # -------------------------------------------------------------------------
+    # STEP 3: CONVERGENCE RATES COMPUTATION & SUMMARY
+    # -------------------------------------------------------------------------
+    dx_h = [1.0 / n for n in resolutions]
+    rates_L2_u, rates_H1_u, rates_L2_p = [], [], []
 
-            if not any(np.isnan([e1_L2, e2_L2, e1_H1, e2_H1])):
-                log_h = np.log(dx_h[i] / dx_h[i+1])
-                p_L2  = np.log(e1_L2 / e2_L2) / log_h
-                p_H1  = np.log(e1_H1 / e2_H1) / log_h
-                rates_L2.append(p_L2)
-                rates_H1.append(p_H1)
-                print(f"  Rate n={resolutions[i]}→{resolutions[i+1]}: "
-                      f"p_L2={p_L2:+.3f}  p_H1={p_H1:+.3f}")
-            else:
-                rates_L2.append(float('nan'))
-                rates_H1.append(float('nan'))
-
-
-            if not any(np.isnan([e1_p, e2_p])):
-                rate_p = np.log(e1_p / e2_p) / log_h
-                rates_p.append(rate_p)
-            else:
-                rates_p.append(float('nan'))
-
-            print(f"  Rate n={resolutions[i]}→{resolutions[i+1]}: "
-                  f"p_uL2={rates_L2[-1]:+.3f}  p_uH1={rates_H1[-1]:+.3f}  p_pL2={rates_p[-1]:+.3f}")
-
-        summary[method] = {
-            "resolutions": resolutions,
-            "h":           dx_h,
-            "L2":          errors_L2_T,
-            "H1":          errors_H1_T,
-            "p_L2_final":  errors_p_final,
-            "rates_L2":    rates_L2,
-            "rates_H1":    rates_H1,
-            "rates_p":     rates_p
-        }
-
-    _save_summary(summary, dirs["data"])
-    _save_raw_errors(results, time_steps, resolutions, methods, dirs["data"])
-
-    generate_convergence_plots(summary, dirs["conv_plots"])
-
-    if y_ref is not None:
-        generate_profile_plots(y_ref, u_ref, profiles, methods, resolutions, dirs["profiles"])
-
-    # Convergence Rates for Pressure L2 Norm at final time step
-    rates_p = []
     for i in range(len(resolutions) - 1):
-        e1_p, e2_p = errors_p_L2[i], errors_p_L2[i+1]
-        log_h = np.log(dx_h[i] / dx_h[i+1])
-        rate_p = np.log(e1_p / e2_p) / log_h
-        rates_p.append(rate_p)
-        print(f" Pressure L2 Rate n={resolutions[i]}→{resolutions[i+1]} at t=T: {rate_p:+.3f}")
+        log_h = np.log(dx_h[i] / dx_h[i + 1])
+        rates_L2_u.append(np.log(err_L2_u[i] / err_L2_u[i + 1]) / log_h)
+        rates_H1_u.append(np.log(err_H1_u[i] / err_H1_u[i + 1]) / log_h)
+        if not math.isnan(err_L2_p[i]) and not math.isnan(err_L2_p[i + 1]):
+            rates_L2_p.append(np.log(err_L2_p[i] / err_L2_p[i + 1]) / log_h)
+        else:
+            rates_L2_p.append(float('nan'))
 
-    print(f"\n>> All the results are saved in: {output_dir}/")
+    print("\n" + "=" * 70)
+    print(f" CONVERGENCE RESULTS SUMMARY ({solver_type.upper()}, {obstacle_type.upper()}, Re={Re})")
+    print("=" * 70)
+    print(f"{'n':>6} | {'h':>10} | {'L2 Velocity Err':>16} | {'H1 Velocity Err':>16} | {'L2 Pressure Err':>16}")
+    print("-" * 70)
+    for i, n in enumerate(resolutions):
+        p_str = f"{err_L2_p[i]:14.5e}" if not math.isnan(err_L2_p[i]) else "           N/A"
+        print(f"{n:6d} | {dx_h[i]:10.5f} | {err_L2_u[i]:16.5e} | {err_H1_u[i]:16.5e} | {err_L2_p[i]:16.5e}")
+    print("-" * 70)
 
-    # Plot final step profile comparison
-    # generate_plots(y_ref, u_ref, profiles, methods, resolutions)
+    print("\nEmpirical Convergence Rates:")
+    for i in range(len(resolutions) - 1):
+        n1, n2 = resolutions[i], resolutions[i + 1]
+        print(f"  n = {n1} -> {n2}:  Rate L2(u) = {rates_L2_u[i]:+.3f} | "
+              f"Rate H1(u) = {rates_H1_u[i]:+.3f} | "
+              f"Rate L2(p) = {rates_L2_p[i]:+.3f}")
+    print("=" * 70 + "\n")
 
-def _save_summary(summary, data_dir):
-    path = os.path.join(data_dir, "convergence_summary.txt")
-    with open(path, "w") as f:
-        f.write("CONVERGENCE ANALYSIS SUMMARY\n")
-        f.write("=" * 60 + "\n\n")
-        for method, s in summary.items():
-            f.write(f"Method: {method.upper()}\n")
-            f.write(f"{'n':>5} {'h':>10} {'L2(0,T;L2)':>15} {'L2(0,T;H1)':>15}\n")
-            f.write("-" * 50 + "\n")
-            for i, n in enumerate(s["resolutions"]):
-                f.write(f"{n:>5} {s['h'][i]:>10.4f} {s['L2'][i]:>15.5e} {s['H1'][i]:>15.5e}\n")
-            f.write("\nConvergence rates:\n")
-            for i, (rL2, rH1) in enumerate(zip(s["rates_L2"], s["rates_H1"])):
-                n1, n2 = s["resolutions"][i], s["resolutions"][i+1]
-                rL2, rH1, rP = s["rates_L2"][i], s["rates_H1"][i], s["rates_p"][i]
-                f.write(f"  n={n1}→{n2}: p_L2={rL2:+.3f}  p_H1={rH1:+.3f}\n")
-            f.write("\n")
-    print(f"\n   Summary saved: {path}")
+    # -------------------------------------------------------------------------
+    # STEP 4: LOG-LOG CONVERGENCE PLOT, VERTICAL PROFILE AND SUMMARY TABLES
+    # -------------------------------------------------------------------------
+    case_name = "Brinkman" if solver_type.lower() == "brinkman" else "DLM"
+    out_dir = os.path.join(project_dir, "Plots", case_name)
+    os.makedirs(out_dir, exist_ok=True)
+    plot_filename = os.path.join(out_dir, f"convergence_loglog_{case_name}_{obstacle_type}_Re{Re}.png")
 
+    plot_spatial_convergence_summary(
+        resolutions=resolutions,
+        dx_h=dx_h,
+        err_L2_u=err_L2_u,
+        err_H1_u=err_H1_u,
+        err_L2_p=err_L2_p,
+        rates_L2_u=rates_L2_u,
+        rates_H1_u=rates_H1_u,
+        rates_L2_p=rates_L2_p,
+        profiles=profiles,
+        y_ref=y_ref,
+        u_mag_ref=u_mag_ref,
+        solver_type=solver_type,
+        obstacle_type=obstacle_type,
+        Re=Re,
+        x_obs=x_obs,
+        Ly=Ly,
+        plot_filename=plot_filename
+    )
 
-def _save_raw_errors(results, time_steps, resolutions, methods, data_dir):
-    for method in methods:
-        for n in resolutions:
-            path = os.path.join(data_dir, f"errors_{method}_n{n}.csv")
-            l2 = results[method][n]["L2"]
-            h1 = results[method][n]["H1"]
-            p_l2 = results[method][n]["p_L2"]
-
-            with open(path, "w") as f:
-                f.write("t,L2_error, H1_error, p_L2_error\n")
-                for t, e2, e1 in zip(time_steps, l2, h1):
-                    e2 = l2[i] if i < len(l2) else float('nan')
-                    e1 = h1[i] if i < len(h1) else float('nan')
-                    ep = p_l2[0] if (abs(t - time_steps[-1]) < 1e-5 and len(p_l2) > 0) else float('nan')
-                    f.write(f"{t:.2f},{e2:.6e},{e1:.6e},{ep:.6e}\n")
-
-
-def generate_convergence_plots(summary, plot_dir):
-    """
-    Produce due figure:
-      1. Grafico log-log errore vs h per L2 e H1
-      2. Evoluzione temporale degli errori (se si passa results)
-    """
-    colors  = {"Brinkman": "#2c7bb6", "DLM": "#d7191c"}
-    markers = {50: "o", 100: "s", 150: "^"}
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Spatial Convergence — Bochner Norms", fontsize=13, fontweight="bold")
-
-    for norm_idx, norm_name in enumerate(["L2", "H1"]):
-        ax = axes[norm_idx]
-        ax.set_title(f"$L^2(0,T; {'L^2' if norm_name=='L2' else 'H^1'})$ Error")
-
-        for method, s in summary.items():
-            h_vals = np.array(s["h"])
-            e_vals = np.array(s[norm_name])
-            valid  = ~np.isnan(e_vals)
-            if valid.sum() < 2:
-                continue
-            ax.loglog(h_vals[valid], e_vals[valid],
-                      color=colors.get(method, "gray"),
-                      marker="o", markersize=7, linewidth=1.8,
-                      label=method.upper())
-
-        # Linee di riferimento ordine 1 e 2
-        h_ref = np.array([1/25, 1/50, 1/70])
-        for order, ls, lbl in [(1, "--", "O(h)"), (2, ":", "O(h²)")]:
-            scale = 0.3 if norm_name == "L2" else 5.0
-            ax.loglog(h_ref, scale * h_ref**order,
-                      color="gray", linestyle=ls, linewidth=1.2, label=lbl)
-
-        ax.set_xlabel("Mesh size $h = 1/n$")
-        ax.set_ylabel("Error norm")
-        ax.legend(framealpha=0.9, fontsize=9)
-        ax.grid(True, which="both", linestyle="--", alpha=0.4)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    plt.tight_layout()
-    path = os.path.join(plot_dir, "convergence_loglog.png")
-    plt.savefig(path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"   Plot saved: {path}")
-
-
-def generate_profile_plots(y_ref, u_ref, profiles, methods, resolutions, plot_dir):
-    """
-    Profilo verticale della velocità al tempo finale per ogni metodo.
-    Un file PNG separato per ciascun metodo.
-    """
-    colors = {50: "#f4a61d", 100: "#2ca02c", 150: "#d62728"}
-
-    for method in methods:
-        fig, ax = plt.subplots(figsize=(7, 6))
-        fig.suptitle(
-            f"Velocity Magnitude Profile at $t = T$ — {method.upper()}\n"
-            "Vertical Cut Through Cylinder Center",
-            fontsize=12, fontweight="bold"
-        )
-
-        ax.plot(u_ref, y_ref, color="black", linewidth=2.0,
-                linestyle="-", label="Conforming (ref.)", zorder=5)
-
-        for n in resolutions:
-            if n in profiles[method]:
-                y_p, u_p = profiles[method][n]
-                ax.plot(u_p, y_p, color=colors[n], linewidth=1.5,
-                        linestyle="--", label=f"n={n}")
-
-        ax.set_xlabel("$\\|\\mathbf{u}\\|$ (velocity magnitude)")
-        ax.set_ylabel("$y$ (vertical coordinate)")
-        ax.set_xlim(left=0)
-        ax.set_ylim(0, 1)
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-        plt.tight_layout()
-
-        path = os.path.join(plot_dir, f"velocity_profiles_{method}.png")
-        plt.savefig(path, dpi=300, bbox_inches="tight")
-        plt.close()
-        print(f"   Plot saved: {path}")
-
-
-# This is an alternative versione of the plot method that puts both profile-analysis in a
-# single figure with subplots
-def generate_profile_plots_ver2(y_ref, u_ref, profiles, methods, resolutions, plot_dir):
-    """
-    Profilo verticale della velocità al tempo finale per ogni metodo.
-    Tutti i metodi in una sola figura con subplots per confronto diretto.
-    """
-    colors = {50: "#f4a61d", 100: "#2ca02c", 150: "#d62728"}
-
-    n_methods = len(methods)
-    fig, axes = plt.subplots(1, n_methods, figsize=(7 * n_methods, 6), sharey=True)
-    if n_methods == 1:
-        axes = [axes]
-
-    fig.suptitle("Velocity Magnitude Profile at $t = T$ — Vertical Cut Through Cylinder Center",
-                 fontsize=12, fontweight="bold")
-
-    for ax, method in zip(axes, methods):
-        ax.set_title(f"{method.upper()}", fontsize=11)
-        ax.plot(u_ref, y_ref, color="black", linewidth=2.0,
-                linestyle="-", label="Conforming (ref.)", zorder=5)
-
-        for n in resolutions:
-            if n in profiles[method]:
-                y_p, u_p = profiles[method][n]
-                ax.plot(u_p, y_p, color=colors[n], linewidth=1.5,
-                        linestyle="--", label=f"n={n}")
-
-        ax.set_xlabel("$\\|\\mathbf{u}\\|$ (velocity magnitude)")
-        ax.set_xlim(left=0)
-        ax.set_ylim(0, 1)
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    axes[0].set_ylabel("$y$ (vertical coordinate)")
-    plt.tight_layout()
-
-    path = os.path.join(plot_dir, "velocity_profiles_comparison.png")
-    plt.savefig(path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"   Plot saved: {path}")
-
-"""
-def generate_plots(y_ref, u_ref, profiles, methods, resolutions):
-
-    colors = {50: '#f4c430', 100: '#5cb85c', 150: '#d9534f'}
-    
-    for method in methods:
-        plt.figure(figsize=(9, 6))
-        plt.title(f"2D Flow Around Moving Cylinder - {method.upper()} Spatial Convergence", fontsize=12, pad=15)
-        
-        # Plot exact reference
-        plt.plot(y_ref, u_ref, label='Conforming (Reference)', color='black', linewidth=1.75, linestyle='-')
-        
-        # Plot penalized approximations
-        for n in resolutions:
-            if n in profiles[method]:
-                plt.plot(y_ref, profiles[method][n], label=f'{method.capitalize()} n={n}', 
-                         color=colors[n], linewidth=1.5, linestyle='--')
-        
-        # Post-styling
-        plt.xlim(0.0, 1.0)
-        plt.xticks(np.arange(0.0, 1.05, 0.05), rotation=45)
-        plt.xlabel("Vertical Coordinate (y)", fontsize=10)
-        plt.ylabel("Velocity Magnitude ||u||", fontsize=10)
-        
-        plt.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
-        plt.legend(loc='upper right', framealpha=1.0, edgecolor='black', fontsize=9)
-        plt.gca().spines['top'].set_visible(False)
-        plt.gca().spines['right'].set_visible(False)
-        plt.tight_layout()
-        
-        plt.savefig(f"convergence_profile_{method}.png", dpi=300)
-        plt.show()
-"""
 
 # =============================================================================
-# 4. EXECUTION TARGET
+# 4. SCRIPT EXECUTION AND PARAMETER SPECIFICATION
 # =============================================================================
+
 if __name__ == "__main__":
-    # 1. Import your real obstacle class and domain settings
-    # Since 'src' and 'domain_settings' are both under 'Penalty - RIIS&Brinkman', 
-    # we need to ensure Python can find 'domain_settings' by moving up one level.
-    import sys
-    import os
-    
-    current_dir = os.path.dirname(os.path.abspath(__file__)) 
-    parent_dir = os.path.dirname(current_dir) 
-    if parent_dir not in sys.path:
-        sys.path.append(parent_dir)
-        
-    from domain_settings.obstacles import circleObstacle, squareObstacle
+    # =========================================================================
+    # EDIT CONVERGENCE STUDY PARAMETERS HERE
+    # =========================================================================
+    resolutions = [40, 80, 120, 160]        # Mesh refinement levels n to simulate
+    obstacle_type = "square"                     # "square" or "cylinder" (both stationary/fixed)
+    solver_type = "Brinkman"                          # "Brinkman" or "dlm"
+    Re = 40.0                                    # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
+    refinement_conforming = 200                # Exact conforming reference mesh refinement
+    R_penalty = 100000.0                         # Resistive parameter R (for Brinkman solver)
+    dt = 0.5                                     # Time step size dt (can be None to use solver default)
+    t_final = 40.0                               # Final simulation time step t_final for DLM / Brinkman
+    t_final_conforming = 20.0                    # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
+    # =========================================================================
 
-    # 2. Instantiate your obstacle with the physical parameters 
-    obstacle = circleObstacle(x=0.5, y=0.5, r=0.1) 
-
-    # 3. Define the project directory path 
-    PROJECT_DIR = parent_dir
-    OUTPUT_DIR  = os.path.join(current_dir, "results")
-    
-    # 4. Trigger the full automated pipeline
-    run_pipeline(PROJECT_DIR, obstacle, output_dir=OUTPUT_DIR)
+    run_convergence_analysis(
+        resolutions=resolutions,
+        obstacle_type=obstacle_type,
+        solver_type=solver_type,
+        Re=Re,
+        refinement_conforming=refinement_conforming,
+        R_penalty=R_penalty,
+        dt=dt,
+        t_final=t_final,
+        t_final_conforming=t_final_conforming
+    )

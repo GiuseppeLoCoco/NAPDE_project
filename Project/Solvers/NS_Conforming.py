@@ -19,13 +19,14 @@ from post_processing import save_VTK, save_checkpoint, plot_results, create_outp
 from Solvers.Stokes_solver import solve_stokes_initial
 
 class Conforming_solver:
-    def __init__(self, moving=False, type_obstacle="square", n=None, Re=None):
+    def __init__(self, moving=False, type_obstacle="square", n=None, Re=None, structured=False):
 
         self.moving = moving
         # self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n_conforming
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
     def conforming_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
@@ -54,7 +55,7 @@ class Conforming_solver:
 
         if mesh is None:
             if self.obstacle is not None:
-                mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n)
+                mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n, structured=self.structured)
             else:
                 mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
         
@@ -187,7 +188,7 @@ class Conforming_solver:
             if self.moving:
                 print("Re-meshing for moving obstacle...")
                 # Create new mesh for the current time
-                new_mesh = conforming_mesh(Lx, Ly, self.obstacle, n, t_val=t_val)
+                new_mesh = conforming_mesh(Lx, Ly, self.obstacle, n, t_val=t_val, structured=self.structured)
 
                 # Define new function spaces
                 V_new = VectorFunctionSpace(new_mesh, "CG", 2)
