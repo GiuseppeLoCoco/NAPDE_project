@@ -28,12 +28,6 @@ project_dir = os.path.dirname(current_dir)
 if project_dir not in sys.path:
     sys.path.append(project_dir)
 
-"""
-for p in [project_dir, os.path.join(project_dir, "domain_settings"), 
-         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
-    if p not in sys.path:
-        sys.path.append(p)
-"""
 
 from domain_settings.obstacles import circleObstacle, squareObstacle
 from user_inputs.user_parameters import x_obs, y_obs, r_obs, side_length, Lx, Ly

@@ -42,13 +42,13 @@ from Solvers.NS_DLM_simple import NS_DLM_Solver
 
 class ManufacturedSolution:
     """Exact divergence-free analytical solution and corresponding Navier-Stokes body force."""
-    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0):
+    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0, L_char: float = 1.0):
         self.Lx = Lx
         self.Ly = Ly
         self.Re = Re
         self.rho = rho
         self.u_char = 1.0
-        self.L_char = 0.2  # Characteristic scale
+        self.L_char = L_char  # Characteristic scale matching the channel/buffer (1.0)
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
     def u_exact(self, mesh):
@@ -95,6 +95,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
     )
@@ -126,7 +127,7 @@ def solve_phase2_dlm_buffer(n: int, mms: ManufacturedSolution,
     solid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = NS_DLM_Solver(moving=False, n=n, Re=mms.Re)
+    solver = NS_DLM_Solver(moving=False, type_obstacle="buffer", n=n, Re=mms.Re)
 
     mesh_out, uh, ph = solver.NS_DLM_Solve(
         fluid_mesh=fluid_mesh,
@@ -135,6 +136,7 @@ def solve_phase2_dlm_buffer(n: int, mms: ManufacturedSolution,
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
     )
@@ -209,7 +211,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 # =============================================================================
 
 def run_dlm_experiment_pipeline(
-    resolutions: List[int] = [75, 100, 125],
+    resolutions: List[int] = [40,80,120],
     Lx: float = 4.0,
     Ly: float = 1.0,
     L_buf: float = 1.0,
@@ -311,12 +313,12 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[20, 40, 60],
+        resolutions=[40, 80, 160],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
-        T_end=2.0,
-        dt=0.2,
+        T_end=10.0,
+        dt=0.5,
         output_dir="results_dlm_buffer_recovery"
     )

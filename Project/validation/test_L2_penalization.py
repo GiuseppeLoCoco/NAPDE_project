@@ -51,10 +51,13 @@ from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_Conforming import Conforming_solver
 from validation.checkpoint_loader import (
     get_case_directory, get_field_filepath, load_hdf5_solution,
-    load_conforming_solution, load_brinkman_solution
+    load_conforming_solution, load_brinkman_solution, extract_probe_history
 )
 from validation.validation_plots import (
-    plot_l2_penalization_convergence, plot_steady_comparison
+    plot_l2_penalization_convergence,
+    plot_pressure_comparison,
+    plot_vorticity_comparison,
+    plot_strouhal_comparison
 )
 
 
@@ -89,7 +92,7 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
     obs = squareObstacle(x_obs, y_obs, side_length=D)
 
     # 2. Conforming reference solver (search Plots/Conforming first)
-    ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re)
+    ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re, t_final=T_end)
     if ref_mesh is None:
         print("\n--- Running Conforming Reference Solver ---")
         conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=True)
@@ -164,12 +167,18 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
         print(f"{r['eta']:<10.1e} | {r['err_solid']:<16.3e} | {rate_s_str:<14} | {r['err_fluid']:<20.3e} | {rate_f_str:<14}")
     print("="*85)
 
-    # 6. Plot Convergence Curves
+    # 6. Plot 1: Log-log Convergence Curves (Table 1)
     plot_l2_penalization_convergence(results, output_dir)
 
-    # 7. Plot Fig. 3 Comparison: Pressure and Vorticity fields
-    plot_steady_comparison(ref_mesh, u_ref, p_ref, results[-1]['mesh'], results[-1]['uh'], results[-1]['ph'],
-                           eta=results[-1]['eta'], output_dir=output_dir)
+    # 7. Plot 2: Pressure Comparison (Colormap + Isobars)
+    plot_pressure_comparison(ref_mesh, p_ref, results[-1]['mesh'], results[-1]['ph'],
+                             eta=results[-1]['eta'], output_dir=output_dir,
+                             x_obs=x_obs, y_obs=y_obs, side_length=D)
+
+    # 8. Plot 3: Vorticity Comparison (Colormap + Isolines)
+    plot_vorticity_comparison(ref_mesh, u_ref, results[-1]['mesh'], results[-1]['uh'],
+                              eta=results[-1]['eta'], output_dir=output_dir,
+                              x_obs=x_obs, y_obs=y_obs, side_length=D)
 
     return results
 
@@ -218,8 +227,8 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
     Reproduces Section 6.1 (Unsteady case at Re = 80, Table 2 & Figs. 4-5):
     - Solves unsteady vortex shedding with Conforming_solver (reference).
     - Solves with Brinkman_solver for each eta (R = 1/eta).
-    - Measures vortex shedding frequency and Strouhal number St = f*D/U.
-    - Demonstrates convective delay effect for large eta = 10^-2.
+    - Computes shedding frequency f, period T, and Strouhal number St = f*D/U.
+    - Generates 3 validation plots: Strouhal & Signal comparison, Pressure, and Vorticity street (von Kármán).
     """
     if eta_list is None:
         eta_list = [1e-2, 1e-4, 1e-6, 1e-8]
@@ -231,16 +240,16 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
     Re = 80.0
     D = side_length
     U_mean = 1.0
+    probe_pt = (1.5, 0.5)
 
     print("\n" + "="*80)
-    print(f" EXPERIMENT 2: UNSTEADY VORTEX SHEDDING AT Re = {Re} (TABLE 2, FIGS 4 & 5)")
+    print(f" EXPERIMENT 2: UNSTEADY VORTEX SHEDDING AT Re = {Re} (TABLE 2)")
     print("="*80)
 
     obs = squareObstacle(x_obs, y_obs, side_length=D)
-    histories = {}
 
     # 1. Run reference conforming simulation (search Plots/Conforming first)
-    ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re)
+    ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re, t_final=T_end)
     if ref_mesh is None:
         print("\n--- Running Unsteady Conforming Reference Solver ---")
         conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=True)
@@ -249,6 +258,25 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
             dt=dt,
             t_final=T_end
         )
+
+    # Extract Conforming Reference probe signal & Strouhal number
+    conf_dir = get_case_directory("Conforming", "square", Re=Re, n=n)
+    t_ref, ux_ref, uy_ref = extract_probe_history(conf_dir, probe_pt=probe_pt)
+    f_ref, St_ref = compute_strouhal_number(t_ref, uy_ref, D=D, U_mean=U_mean)
+    T_ref = (1.0 / f_ref) if f_ref > 0 else 0.0
+
+    strouhal_data = {
+        'Conforming': {
+            'label': 'Conforming (Dirichlet)',
+            't': t_ref,
+            'uy': uy_ref,
+            'f': f_ref,
+            'T': T_ref,
+            'St': St_ref
+        }
+    }
+
+    results = []
 
     # 2. Run penalized Brinkman simulations for each eta (check existing data first)
     for eta in eta_list:
@@ -262,10 +290,77 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
                 dt=dt,
                 t_final=T_end
             )
-        histories[eta] = {'uh': uh, 'ph': ph}
 
-    print("\nUnsteady simulations completed.")
-    return histories
+        chi_s = obs.chi(p_mesh, Constant(0.0))
+        chi_f = 1.0 - chi_s
+
+        # L2 error norm inside solid Omega_s: ||u_eta||_L2(Omega_s)
+        err_solid_sq = assemble(chi_s * inner(uh, uh) * dx)
+        err_solid = math.sqrt(err_solid_sq)
+
+        # L2 error norm in fluid domain Omega_f: ||u_eta - u_ref||_L2(Omega_f)
+        V_p = uh.function_space()
+        u_ref_proj = project(u_ref, V_p)
+        err_fluid_vec = uh - u_ref_proj
+        err_fluid_sq = assemble(chi_f * inner(err_fluid_vec, err_fluid_vec) * dx)
+        err_fluid = math.sqrt(err_fluid_sq)
+
+        # Extract Brinkman probe signal & Strouhal number
+        brink_dir = get_case_directory("Brinkman", "square", Re=Re, n=n, R_penalty=R_val)
+        t_pen, ux_pen, uy_pen = extract_probe_history(brink_dir, probe_pt=probe_pt)
+        f_pen, St_pen = compute_strouhal_number(t_pen, uy_pen, D=D, U_mean=U_mean)
+        T_pen = (1.0 / f_pen) if f_pen > 0 else 0.0
+
+        strouhal_data[eta] = {
+            'label': fr'$\eta = {eta:.1e}$',
+            't': t_pen,
+            'uy': uy_pen,
+            'f': f_pen,
+            'T': T_pen,
+            'St': St_pen
+        }
+
+        results.append({
+            'eta': eta,
+            'R': R_val,
+            'err_solid': err_solid,
+            'err_fluid': err_fluid,
+            'mesh': p_mesh,
+            'uh': uh,
+            'ph': ph,
+            'St': St_pen,
+            'f': f_pen,
+            'T': T_pen
+        })
+
+    # 3. Print Table 2: Strouhal Number & Shedding Frequency at Re = 80
+    print("\n" + "="*95)
+    print(" TABLE 2: Unsteady flow at Re = 80: Strouhal number and shedding frequency (Angot et al. 1999)")
+    print("="*95)
+    print(f"{'Case':<25} | {'Period T (s)':<14} | {'Frequency f (Hz)':<18} | {'Strouhal St':<14} | {'St Error (%)':<12}")
+    print("-" * 95)
+    print(f"{'Conforming Reference':<25} | {T_ref:<14.3f} | {f_ref:<18.3f} | {St_ref:<14.4f} | {'---':<12}")
+    for r in results:
+        err_st_str = f"{abs(r['St'] - St_ref)/St_ref * 100:.2f}%" if St_ref > 0 else "---"
+        print(f"eta = {r['eta']:<18.1e} | {r['T']:<14.3f} | {r['f']:<18.3f} | {r['St']:<14.4f} | {err_st_str:<12}")
+    print("="*95)
+
+    # 4. Generate the 3 Output Plots for Unsteady Flow:
+    # 4.1. Plot 1: Strouhal Number and Time Signals Comparison (Table 2 & Fig. 4)
+    plot_strouhal_comparison(strouhal_data, output_dir)
+
+    # 4.2. Plot 2: Pressure Comparison Plot (Colormap + Isobars at t = T_end)
+    plot_pressure_comparison(ref_mesh, p_ref, results[-1]['mesh'], results[-1]['ph'],
+                             eta=results[-1]['eta'], output_dir=output_dir,
+                             x_obs=x_obs, y_obs=y_obs, side_length=D)
+
+    # 4.3. Plot 3: Vorticity Comparison Plot (Colormap + Isolines showing von Kármán vortex street at t = T_end)
+    plot_vorticity_comparison(ref_mesh, u_ref, results[-1]['mesh'], results[-1]['uh'],
+                              eta=results[-1]['eta'], output_dir=output_dir,
+                              x_obs=x_obs, y_obs=y_obs, side_length=D)
+
+    print(f"\nUnsteady experiment completed. All 3 plots saved to: {output_dir}")
+    return results
 
 
 # =============================================================================
@@ -273,27 +368,45 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
 # =============================================================================
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="L2 Penalization Validation (Angot et al. 1999)")
-    parser.add_argument("--mode", type=str, default="steady", choices=["steady", "unsteady", "all"],
-                        help="Select test mode: 'steady' (Re=40), 'unsteady' (Re=80), or 'all'")
-    parser.add_argument("--n", type=int, default=320, help="Resolution parameter n (default: 320)")
-    parser.add_argument("--T_end", type=float, default=10.0, help="Final simulation time (default: 10.0)")
-    parser.add_argument("--dt", type=float, default=0.05, help="Time step dt (default: 0.05)")
+    # =========================================================================
+    # PARAMETRI MODIFICABILI DIRETTAMENTE DA CODICE
+    # =========================================================================
+    # Modalità di test: "steady" (Re=40), "unsteady" (Re=80), o "all"
+    mode = "unsteady"
 
+    # Risoluzione mesh (es. n=320 per benchmark finale, n=80 per test veloci)
+    n = 320
+
+    # Passo temporale dt (es. dt=0.5 o dt=0.05)
+    dt = 0.2
+
+    # Tempo finale di simulazione
+    T_end_steady = 40.0
+    T_end_unsteady = 25.0
+
+    # Lista di valori di eta (permeabilità = 1/R) da testare
+    eta_list_steady = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+    eta_list_unsteady = [1e-2, 1e-4, 1e-6]
+    # =========================================================================
+
+    parser = argparse.ArgumentParser(description="L2 Penalization Validation (Angot et al. 1999)")
+    parser.add_argument("--mode", type=str, default=mode, choices=["steady", "unsteady", "all"],
+                        help="Select test mode: 'steady' (Re=40), 'unsteady' (Re=80), or 'all'")
     args = parser.parse_args()
 
     if args.mode in ["steady", "all"]:
         run_steady_experiment(
-            eta_list=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6],
-            n=args.n,
-            dt=args.dt,
-            T_end=args.T_end
+            eta_list=eta_list_steady,
+            n=n,
+            dt=dt,
+            T_end=T_end_steady
         )
 
     if args.mode in ["unsteady", "all"]:
         run_unsteady_experiment(
-            eta_list=[1e-2, 1e-4, 1e-6, 1e-8],
-            n=args.n,
-            T_end=args.T_end,
-            dt=args.dt
+            eta_list=eta_list_unsteady,
+            n=n,
+            T_end=T_end_unsteady,
+            dt=dt
         )
+

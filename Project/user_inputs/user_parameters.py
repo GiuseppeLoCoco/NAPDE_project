@@ -22,7 +22,7 @@ n_conforming = 200
 
 # Cylinder and Square Obstacle parameters
 x_obs = 0.5
-y_obs = 0.5*Ly
+y_obs = 0.55*Ly
 r_obs = 0.1
 side_length = 0.2
 

@@ -8,44 +8,98 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from firedrake import FunctionSpace, Function
-from firedrake.pyplot import tripcolor
+from firedrake.pyplot import tripcolor, tricontour, tricontourf, triplot
+import matplotlib.patches as patches
 
 
 # =============================================================================
-# 1. L2 PENALIZATION PAPER PLOTS (Angot et al. 1999)
+# 1. L2 PENALIZATION PAPER PLOTS (Angot et al. 1999, Section 6.1)
 # =============================================================================
 
 def plot_l2_penalization_convergence(results, output_dir: str):
     """
-    Plots log-log convergence of L2 velocity error norms in solid and fluid vs penalization parameter eta.
+    1. Plots log-log convergence of L2 velocity error norms in solid and fluid vs penalization parameter eta (Table 1).
     """
     etas = [r['eta'] for r in results]
     err_s = [r['err_solid'] for r in results]
     err_f = [r['err_fluid'] for r in results]
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
     ax.loglog(etas, err_s, 'o-b', linewidth=2, label=r'$\|u_\eta\|_{L^2(\Omega_s)}$ (Solid error)')
     ax.loglog(etas, err_f, 's-r', linewidth=2, label=r'$\|u_\eta - u_{ref}\|_{L^2(\Omega_f)}$ (Fluid error)')
     ax.loglog(etas, [etas[0]**1.0 * err_s[0] / (etas[0]**1.0) * (e/etas[0]) for e in etas], '--k', label=r'Theoretical $O(\eta)$')
     
     ax.set_xlabel(r'Penalization parameter $\eta$', fontsize=12)
     ax.set_ylabel(r'$L^2$ Error Norm', fontsize=12)
-    ax.set_title('Convergence of L2 Penalization Method at Re = 40 (Table 1)', fontsize=13)
+    ax.set_title('Convergence of L2 Penalization Method at Re = 40 (Table 1)', fontsize=13, fontweight='bold')
     ax.grid(True, which="both", ls=":")
     ax.legend(fontsize=11)
     
     plot_path_conv = os.path.join(output_dir, "l2_error_convergence_re40.png")
-    fig.savefig(plot_path_conv, dpi=200, bbox_inches='tight')
+    fig.savefig(plot_path_conv, dpi=200, bbox_inches='tight', facecolor='white')
     plt.close(fig)
-    print(f"\nSaved convergence plot to: {plot_path_conv}")
+    print(f"\n1. Saved Convergence plot to: {plot_path_conv}")
 
 
-def plot_steady_comparison(ref_mesh, u_ref, p_ref, pen_mesh, u_pen, p_pen, eta: float, output_dir: str):
+def plot_pressure_comparison(ref_mesh, p_ref, pen_mesh, p_pen, eta: float, output_dir: str,
+                             x_obs: float = 1.0, y_obs: float = 0.5, side_length: float = 0.2):
     """
-    Generates side-by-side / stacked comparison of Pressure and Vorticity fields
-    between reference Dirichlet condition and L2 penalization (Fig. 3 from paper).
+    2. Plots side-by-side comparison of Pressure: Continuous Colormap + Isobars (contour lines)
+    for Reference Conforming vs L2 Penalization.
     """
-    fig, axes = plt.subplots(4, 1, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 1, figsize=(14, 7), sharex=True, sharey=True, facecolor='white')
+
+    p_ref_arr = p_ref.dat.data_ro
+    p_pen_arr = p_pen.dat.data_ro
+    p_min = min(float(np.min(p_ref_arr)), float(np.min(p_pen_arr)))
+    p_max = max(float(np.max(p_ref_arr)), float(np.max(p_pen_arr)))
+    levels = np.linspace(p_min, p_max, 28)
+
+    obs_x0 = x_obs - side_length / 2.0
+    obs_y0 = y_obs - side_length / 2.0
+
+    # 1. Reference Pressure + Isobars
+    axes[0].set_title("Reference (Conforming Dirichlet): Pressure Field & Isobars", fontsize=11, fontweight='bold')
+    p0 = tripcolor(p_ref, axes=axes[0], cmap='RdYlBu_r', shading='gouraud', vmin=p_min, vmax=p_max)
+    tricontour(p_ref, axes=axes[0], levels=levels, colors='black', linewidths=0.55, alpha=0.7)
+    fig.colorbar(p0, ax=axes[0], fraction=0.02, pad=0.02, label='p')
+    rect_ref = patches.Rectangle((obs_x0, obs_y0), side_length, side_length,
+                                 linewidth=1.5, edgecolor='black', facecolor='lightgray', zorder=10)
+    axes[0].add_patch(rect_ref)
+
+    # 2. L2 Penalization Pressure + Isobars
+    axes[1].set_title(fr"L2 Penalization ($\eta = {eta:.1e}$, $R = {1.0/eta:.1e}$): Pressure Field & Isobars", fontsize=11, fontweight='bold')
+    p1 = tripcolor(p_pen, axes=axes[1], cmap='RdYlBu_r', shading='gouraud', vmin=p_min, vmax=p_max)
+    tricontour(p_pen, axes=axes[1], levels=levels, colors='black', linewidths=0.55, alpha=0.7)
+    fig.colorbar(p1, ax=axes[1], fraction=0.02, pad=0.02, label=r'$p_\eta$')
+    rect_pen = patches.Rectangle((obs_x0, obs_y0), side_length, side_length,
+                                 linewidth=1.8, edgecolor='red', facecolor='none', linestyle='--', zorder=10,
+                                 label=r'Immersed $\partial\Omega_s$')
+    axes[1].add_patch(rect_pen)
+    axes[1].legend(loc='upper right', fontsize=10)
+
+    for ax in axes:
+        ax.set_aspect('equal')
+        ax.set_xlim(0.0, 4.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_ylabel("$y$", fontsize=11)
+
+    axes[1].set_xlabel("$x$", fontsize=11)
+
+    plt.tight_layout()
+    plot_path_press = os.path.join(output_dir, "fig3_pressure_comparison.png")
+    fig.savefig(plot_path_press, dpi=200, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"2. Saved Pressure Comparison plot to: {plot_path_press}")
+
+
+def plot_vorticity_comparison(ref_mesh, u_ref, pen_mesh, u_pen, eta: float, output_dir: str,
+                              x_obs: float = 1.0, y_obs: float = 0.5, side_length: float = 0.2):
+    """
+    3. Plots side-by-side comparison of Vorticity: Continuous Colormap + Isolines (contour lines)
+    for Reference Conforming vs L2 Penalization with symmetric colormap.
+    """
+    fig, axes = plt.subplots(2, 1, figsize=(14, 7), sharex=True, sharey=True, facecolor='white')
 
     # Compute vorticity: curl(u) = du_y/dx - du_x/dy
     V_scalar_ref = FunctionSpace(ref_mesh, "CG", 1)
@@ -54,36 +108,104 @@ def plot_steady_comparison(ref_mesh, u_ref, p_ref, pen_mesh, u_pen, p_pen, eta: 
     V_scalar_pen = FunctionSpace(pen_mesh, "CG", 1)
     vort_pen = Function(V_scalar_pen, name="Vorticity_pen").interpolate(u_pen[1].dx(0) - u_pen[0].dx(1))
 
-    # 1. Reference Pressure
-    axes[0].set_title("Reference (Conforming Dirichlet): Pressure Field p", fontsize=11)
-    p0 = tripcolor(p_ref, axes=axes[0], cmap='RdYlBu_r', shading='gouraud')
-    fig.colorbar(p0, ax=axes[0], fraction=0.02, pad=0.02)
+    v_ref_arr = vort_ref.dat.data_ro
+    v_pen_arr = vort_pen.dat.data_ro
+    v_lim = max(float(np.percentile(np.abs(v_ref_arr), 98)), float(np.percentile(np.abs(v_pen_arr), 98)))
+    v_lim = max(1.0, v_lim)
+    levels = np.linspace(-v_lim, v_lim, 28)
 
-    # 2. Reference Vorticity
-    axes[1].set_title("Reference (Conforming Dirichlet): Vorticity Field ω", fontsize=11)
-    p1 = tripcolor(vort_ref, axes=axes[1], cmap='coolwarm', shading='gouraud')
-    fig.colorbar(p1, ax=axes[1], fraction=0.02, pad=0.02)
+    obs_x0 = x_obs - side_length / 2.0
+    obs_y0 = y_obs - side_length / 2.0
 
-    # 3. L2 Penalization Pressure
-    axes[2].set_title(f"L2 Penalization (η = {eta:.1e}): Pressure Field p_η", fontsize=11)
-    p2 = tripcolor(p_pen, axes=axes[2], cmap='RdYlBu_r', shading='gouraud')
-    fig.colorbar(p2, ax=axes[2], fraction=0.02, pad=0.02)
+    # 1. Reference Vorticity + Isolines
+    axes[0].set_title(r"Reference (Conforming Dirichlet): Vorticity Field & Isolines $\omega$", fontsize=11, fontweight='bold')
+    p0 = tripcolor(vort_ref, axes=axes[0], cmap='coolwarm', shading='gouraud', vmin=-v_lim, vmax=v_lim)
+    tricontour(vort_ref, axes=axes[0], levels=levels, colors='black', linewidths=0.55, alpha=0.6)
+    fig.colorbar(p0, ax=axes[0], fraction=0.02, pad=0.02, label=r'$\omega$')
+    rect_ref = patches.Rectangle((obs_x0, obs_y0), side_length, side_length,
+                                 linewidth=1.5, edgecolor='black', facecolor='lightgray', zorder=10)
+    axes[0].add_patch(rect_ref)
 
-    # 4. L2 Penalization Vorticity
-    axes[3].set_title(f"L2 Penalization (η = {eta:.1e}): Vorticity Field ω_η", fontsize=11)
-    p3 = tripcolor(vort_pen, axes=axes[3], cmap='coolwarm', shading='gouraud')
-    fig.colorbar(p3, ax=axes[3], fraction=0.02, pad=0.02)
+    # 2. L2 Penalization Vorticity + Isolines
+    axes[1].set_title(fr"L2 Penalization ($\eta = {eta:.1e}$, $R = {1.0/eta:.1e}$): Vorticity Field & Isolines $\omega_\eta$", fontsize=11, fontweight='bold')
+    p1 = tripcolor(vort_pen, axes=axes[1], cmap='coolwarm', shading='gouraud', vmin=-v_lim, vmax=v_lim)
+    tricontour(vort_pen, axes=axes[1], levels=levels, colors='black', linewidths=0.55, alpha=0.6)
+    fig.colorbar(p1, ax=axes[1], fraction=0.02, pad=0.02, label=r'$\omega_\eta$')
+    rect_pen = patches.Rectangle((obs_x0, obs_y0), side_length, side_length,
+                                 linewidth=1.8, edgecolor='red', facecolor='none', linestyle='--', zorder=10,
+                                 label=r'Immersed $\partial\Omega_s$')
+    axes[1].add_patch(rect_pen)
+    axes[1].legend(loc='upper right', fontsize=10)
 
     for ax in axes:
         ax.set_aspect('equal')
         ax.set_xlim(0.0, 4.0)
         ax.set_ylim(0.0, 1.0)
+        ax.set_ylabel("$y$", fontsize=11)
+
+    axes[1].set_xlabel("$x$", fontsize=11)
 
     plt.tight_layout()
-    plot_path = os.path.join(output_dir, "fig3_pressure_vorticity_comparison.png")
-    fig.savefig(plot_path, dpi=200, bbox_inches='tight')
+    plot_path_vort = os.path.join(output_dir, "fig3_vorticity_comparison.png")
+    fig.savefig(plot_path_vort, dpi=200, bbox_inches='tight', facecolor='white')
     plt.close(fig)
-    print(f"Saved Fig. 3 comparison plot to: {plot_path}")
+    print(f"3. Saved Vorticity Comparison plot to: {plot_path_vort}")
+
+
+def plot_strouhal_comparison(strouhal_data: dict, output_dir: str):
+    """
+    Plots Unsteady Flow Validation (Angot et al. 1999 Table 2 & Fig. 4):
+    Left: Downstream wake velocity signals u_y(t) showing vortex shedding and convective delay.
+    Right: Strouhal number comparison St = f*D/U across penalization parameters eta vs Conforming Reference.
+    """
+    fig, (ax_sig, ax_bar) = plt.subplots(1, 2, figsize=(15, 5.5), facecolor='white')
+
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+    labels = []
+    st_vals = []
+    bar_colors = []
+
+    for i, (key, data) in enumerate(strouhal_data.items()):
+        t = data.get('t', [])
+        sig = data.get('uy', [])
+        st = data.get('St', 0.0)
+        lbl = data.get('label', str(key))
+        col = colors[i % len(colors)]
+
+        # Signal plot
+        if len(t) > 1 and len(sig) > 1:
+            ax_sig.plot(t, sig, label=lbl, color=col, linewidth=1.8, alpha=0.85)
+
+        labels.append(lbl)
+        st_vals.append(st)
+        bar_colors.append(col)
+
+    # Signal panel styling
+    ax_sig.set_xlabel("Time $t$ [s]", fontsize=11)
+    ax_sig.set_ylabel(r"Transverse velocity $u_y(t)$ at wake probe", fontsize=11)
+    ax_sig.set_title("Vortex Shedding Time History (Fig. 4)", fontsize=12, fontweight='bold')
+    ax_sig.grid(True, linestyle=":", alpha=0.6)
+    ax_sig.legend(fontsize=9, loc='upper right')
+
+    # Strouhal Bar Chart styling
+    bars = ax_bar.bar(labels, st_vals, color=bar_colors, width=0.45, edgecolor='black', alpha=0.85)
+    ax_bar.set_ylabel("Strouhal Number $St = f D / U$", fontsize=11)
+    ax_bar.set_title("Strouhal Number $St$ Comparison (Table 2)", fontsize=12, fontweight='bold')
+    ax_bar.axhline(0.166, color='black', linestyle='--', linewidth=1.2, label='Angot benchmark ($St \\approx 0.166$)')
+    ax_bar.grid(True, axis='y', linestyle=":", alpha=0.6)
+    ax_bar.legend(fontsize=9, loc='upper right')
+
+    # Add numeric labels on bars
+    for bar, val in zip(bars, st_vals):
+        if val > 0:
+            ax_bar.text(bar.get_x() + bar.get_width() / 2.0, val + 0.004,
+                        f"{val:.3f}", ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    plt.tight_layout()
+    plot_path_st = os.path.join(output_dir, "unsteady_strouhal_and_signals.png")
+    fig.savefig(plot_path_st, dpi=200, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"Saved Strouhal and Signal comparison plot to: {plot_path_st}")
 
 
 # =============================================================================

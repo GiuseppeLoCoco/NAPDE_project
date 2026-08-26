@@ -70,6 +70,10 @@ class NS_DLM_Solver:
             # Correct order of arguments for rotatingLineObstacle
             self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
             self.symmetric = False # Line obstacles are generally not symmetric in this context
+        elif self.type_obstacle in ["buffer", "Buffer", "none", "None", None]:
+            self.obstacle = None
+            self.moving = False
+            self.symmetric = False
         else:
             raise ValueError(f"Type of obstacle not supported: {self.type_obstacle}")
 
@@ -189,7 +193,12 @@ class NS_DLM_Solver:
         Lm = TrialFunction(Z)
         e = TestFunction(Z)
         uf_ = Function(R)  # fluid velocity interpolated on solid mesh  
-        us_.assign(0.0)
+        if u_ex_val is not None:
+            us_.interpolate(u_ex_val)
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+            us_.interpolate(as_vector([self.obstacle.us_x(0.0), self.obstacle.us_y(0.0)]))
+        else:
+            us_.assign(0.0)
 
         Lm_ = [Function(Z), Function(Z)]
         Lm_[0].assign(0.0)
@@ -343,7 +352,12 @@ class NS_DLM_Solver:
             else:
                 # Fixed obstacle
                 Dp_new.assign(0.0)
-                us_.assign(0.0)
+                if u_ex_val is not None:
+                    us_.interpolate(u_ex_val)
+                elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+                    us_.interpolate(as_vector([self.obstacle.us_x(t_val), self.obstacle.us_y(t_val)]))
+                else:
+                    us_.assign(0.0)
             
 
             fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")

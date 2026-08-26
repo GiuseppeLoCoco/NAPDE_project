@@ -38,13 +38,13 @@ from Solvers.NS_Conforming import Conforming_solver
 # =============================================================================
 
 class ManufacturedSolution:
-    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0):
+    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0, L_char: float = 1.0):
         self.Lx = Lx
         self.Ly = Ly
         self.Re = Re
         self.rho = rho
         self.u_char = 1.0
-        self.L_char = 0.2  # Characteristic length for Reynolds number
+        self.L_char = L_char  # Characteristic length for Reynolds number matching channel/buffer (1.0)
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
     def u_exact(self, mesh):
@@ -92,6 +92,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
     )
@@ -126,6 +127,7 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
     )
