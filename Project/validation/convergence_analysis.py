@@ -35,8 +35,13 @@ from user_inputs.user_parameters import x_obs, y_obs, r_obs, side_length, Lx, Ly
 from Solvers.NS_Conforming import Conforming_solver
 from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_DLM_simple import NS_DLM_Solver
-from validation.checkpoint_loader import get_case_directory, get_field_filepath, load_hdf5_solution
+from Solvers.NS_RIIS import RIIS_solver
+from validation.checkpoint_loader import (
+    get_case_directory, get_field_filepath, load_hdf5_solution,
+    load_conforming_solution, load_brinkman_solution, load_dlm_solution, load_riis_solution
+)
 from validation.validation_plots import plot_spatial_convergence_summary
+
 
 
 # =============================================================================
@@ -148,79 +153,102 @@ def run_convergence_analysis(
     # -------------------------------------------------------------------------
     # STEP 1: CONFORMING REFERENCE SIMULATION
     # -------------------------------------------------------------------------
-    conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
-    conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
-    conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
+    conf_mesh, u_ex, p_ex = load_conforming_solution(
+        obstacle_type=obstacle_type,
+        n=refinement_conforming,
+        Re=Re,
+        t_final=t_conf
+    )
 
-    if not os.path.exists(conf_vel_file):
+    if u_ex is None:
         print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s)...")
         conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
-        conf_solver.conforming_solve(dt=dt, t_final=t_conf)
-        conf_dir = get_case_directory("Conforming", obstacle_type, Re, refinement_conforming)
-        conf_vel_file = get_field_filepath(conf_dir, "velocity", t_conf)
-        conf_pres_file = get_field_filepath(conf_dir, "pressure", t_conf)
+        conf_mesh, u_ex, p_ex = conf_solver.conforming_solve(dt=dt, t_final=t_conf)
     else:
-        print(f">> Loaded existing Conforming reference solution (t = {t_conf:.2f}s) from: {conf_vel_file}")
-
-    u_ex = load_hdf5_solution(conf_vel_file, "velocity")
-    p_ex = load_hdf5_solution(conf_pres_file, "pressure") if os.path.exists(conf_pres_file) else None
+        print(f">> Reusing loaded Conforming reference solution (n = {refinement_conforming}, t = {t_conf:.2f}s).")
 
     # Reference vertical profile
     y_ref, u_mag_ref = extract_vertical_profile(u_ex, x_obs, Ly)
 
     # -------------------------------------------------------------------------
-    # STEP 2: LOOP FOR EACH RESOLUTION n (SIMULATION + ERROR CALCULATION)
+    # STEP 2: LOOP FOR EACH RESOLUTION n (LOAD OR SIMULATE + ERROR CALCULATION)
     # -------------------------------------------------------------------------
     err_L2_u = []
     err_H1_u = []
     err_L2_p = []
     profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-    R_values_used: Dict[int, float] = {}
-
-    n_min = min(resolutions)
 
     for n in resolutions:
 
         print("\n" + "-" * 60)
-        print(f" Running {solver_type} simulation for resolution n = {n} ...")
+        print(f" Checking / Running {solver_type} simulation for resolution n = {n} ...")
         print("-" * 60)
 
-        # 1. Run specified solver
+        # 1. Load existing checkpoint or run specified solver
         if solver_type.lower() == "brinkman":
-            solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
-            solver.Brinkman_solve(dt=dt, t_final=t_final)
-            case_name = "Brinkman"
+            mesh_h, u_h, p_h = load_brinkman_solution(
+                obstacle_type=obstacle_type,
+                n=n,
+                R_val=R_penalty,
+                Re=Re,
+                t_final=t_final
+            )
+            if u_h is None:
+                print(f">> Running Brinkman solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
+                solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+                mesh_h, u_h, p_h = solver.Brinkman_solve(dt=dt, t_final=t_final)
+            else:
+                print(f">> Reusing loaded Brinkman solution (n = {n}, t = {t_final:.2f}s).")
+
         elif solver_type.lower() in ("dlm", "ns_dlm"):
-            solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
-            solver.NS_DLM_Solve(dt=dt, t_final=t_final)
-            case_name = "DLM"
+            mesh_h, u_h, p_h = load_dlm_solution(
+                obstacle_type=obstacle_type,
+                n=n,
+                Re=Re,
+                t_final=t_final
+            )
+            if u_h is None:
+                print(f">> Running DLM solver for resolution n = {n} (t_final = {t_final:.2f}s)...")
+                solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
+                mesh_h, u_h, p_h = solver.NS_DLM_Solve(dt=dt, t_final=t_final)
+            else:
+                print(f">> Using loaded DLM solution (n = {n}, t = {t_final:.2f}s).")
+
+        elif solver_type.lower() == "riis":
+            mesh_h, u_h, p_h = load_riis_solution(
+                obstacle_type=obstacle_type,
+                n=n,
+                R_val=R_penalty,
+                Re=Re,
+                t_final=t_final
+            )
+            if u_h is None:
+                print(f">> Running RIIS solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
+                solver = RIIS_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+                mesh_h, u_h, p_h = solver.RIIS_solve(dt=dt, t_final=t_final)
+            else:
+                print(f">> Using loaded RIIS solution (n = {n}, t = {t_final:.2f}s).")
+
         else:
-            raise ValueError(f"Unknown solver type '{solver_type}'. Must be 'Brinkman' or 'dlm'.")
+            raise ValueError(f"Unknown solver type '{solver_type}'. Must be 'Brinkman', 'dlm', or 'riis'.")
 
-        # 2. Get output directory & load saved checkpoint data
-        case_dir = get_case_directory(case_name, obstacle_type, Re, n, R_penalty)
-        vel_file = get_field_filepath(case_dir, "velocity", t_final)
-        pres_file = get_field_filepath(case_dir, "pressure", t_final)
 
-        print(f" Loading solution at t = {t_final:.2f}s from: {vel_file}")
-        u_h = load_hdf5_solution(vel_file, "velocity")
-
-        # 3. Compute fluid errors
+        # 2. Compute fluid errors
         e_L2_u, e_H1_u = compute_fluid_errors_velocity(u_ex, u_h, obstacle_instance, t_final)
         err_L2_u.append(float(e_L2_u))
         err_H1_u.append(float(e_H1_u))
 
-        if p_ex is not None and os.path.exists(pres_file):
-            p_h = load_hdf5_solution(pres_file, "pressure")
+        if p_ex is not None and p_h is not None:
             e_L2_p = compute_fluid_error_pressure(p_ex, p_h, obstacle_instance, t_final)
             err_L2_p.append(float(e_L2_p))
         else:
             err_L2_p.append(float('nan'))
 
-        # 4. Vertical profile extraction
+        # 3. Vertical profile extraction
         profiles[n] = extract_vertical_profile(u_h, x_obs, Ly)
 
         print(f"   --> n={n:3d} | Error L2(u) = {e_L2_u:.5e} | Error H1(u) = {e_H1_u:.5e} | Error L2(p) = {err_L2_p[-1]:.5e}")
+
 
     # -------------------------------------------------------------------------
     # STEP 3: CONVERGENCE RATES COMPUTATION & SUMMARY

@@ -171,19 +171,12 @@ class NS_DLM_Solver:
         Z = VectorFunctionSpace(solid_mesh, 'P', fem_degree['lagrange_degree'])
         Dp_new = Function(R)
         Dp_old = Function(R)
-        Dp_inc = Function(R)
         us_ = Function(R) # solid velocity
         dx_solid = Measure("dx", domain=solid_mesh)
-        ds_solid = Measure("ds", domain=solid_mesh)
-
-        # Compute Amplitude
-        coords = solid_mesh.coordinates.dat.data_ro
-        bbox = coords.max(axis=0) - coords.min(axis=0)
-        diameter = bbox.max()
-        amplitude = 6.0 * diameter
 
         # Initialize solid mesh coordinates
         init_coords = Function(R).interpolate(solid_mesh.coordinates)
+
 
 
         # --------------------------------
@@ -310,28 +303,6 @@ class NS_DLM_Solver:
 
             time_varying_bc(t_val)
 
-            """
-            !!! Old code for moving and updating the solid mesh coordinates and velocity !!!
-
-            It works only for the cylinder obstacle
-
-            # Update solid position and velocity
-            x_solid = SpatialCoordinate(solid_mesh.mesh)
-            Dp_old.assign(Dp_new)
-            
-            # Compute the displacement Dp_[0]
-            displ_x = (amplitude * 0.5 * (1.0 - math.cos(0.2 * math.pi * t_val)))
-            displ_y = 0.0
-            Dp_new.interpolate(as_vector([displ_x, 0.0]))
-            # Compute the incremental displacement Dp_[1] = Dp_new - Dp_old
-            Dp_inc.assign(Dp_new - Dp_old)
-
-            # Move solid mesh coordinates
-            solid_mesh.coordinates.assign(init_coords + Dp_new)
-            us_.assign(Dp_inc / Constant(dt))
-
-            """
-
             # Update solid position and velocity
             Dp_old.assign(Dp_new)
 
@@ -360,9 +331,6 @@ class NS_DLM_Solver:
                     us_.assign(0.0)
             
 
-            fsi_interpolation.extract_dof_component_map_user(FS['fluid'][2], "F")
-            fsi_interpolation.extract_dof_component_map_user(FS['lagrange'][0], "S")
-
             # Update Lagrange multiplier for new time step
             Lm_[1].assign(Lm_[0])
             # Interpolate Lagrange multiplier from solid mesh to fluid mesh
@@ -374,7 +342,6 @@ class NS_DLM_Solver:
             # Interpolate velocity onto solid mesh
             uf_.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, u_star, "S"))
 
-
             # ------- STEP 2: Solve Lagrange multiplier -------
             solve(a2 == L2, Lm_[0], solver_parameters={'ksp_type': 'bcgs', 'pc_type': 'sor'})
 
@@ -382,36 +349,20 @@ class NS_DLM_Solver:
             Lm_f.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[0], "F"))
             Lm_f_old.assign(interpolate_nonmatching_mesh_delta(fsi_interpolation, Lm_[1], "F"))
 
-
             # ------- STEP 3: Solve velocity correction -------
             solve(a3 == L3, uh, bcs=bcs_correction, solver_parameters={'ksp_type': 'cg', 'pc_type': 'sor'})
             # Update previous solution
             uh_n.assign(uh)
 
-
             # ------- Print max velocity -------
             print('\tu_max:', uh.dat.data.max())
             # ----------------------------------
 
-
-            # coords = solid_mesh.mesh.coordinates.dat.data_ro
-            # print("Solid mesh center:", coords.mean(axis=0), "y-range:", coords[:,1].min(), coords[:,1].max())
-
-
-            # ------- Create output directories ------- 
-            dir_vtk = os.path.join(basedir, "vtk")
-            dir_plots_with_solid = os.path.join(basedir, "plots_with_solid")
-            dir_plots_fluid_only = os.path.join(basedir, "plots_fluid_only")
-            for path in [dir_vtk, dir_plots_with_solid, dir_plots_fluid_only]:
-                os.makedirs(path, exist_ok=True)
-            
-            # ------- Save output & plot (with solid mesh) -------
+            # Save solution to file (VTK/PVD), checkpoint, and plots
             save_VTK(file_dict, t_val, uh, ph)
             save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
-            plot_results(fluid_mesh.mesh, uh, ph, t_val, basedir = dir_plots_with_solid, solid_mesh=solid_mesh)
+            plot_results(fluid_mesh.mesh, uh, ph, t_val=t_val, basedir=basedir, solid_mesh=solid_mesh)
 
-            # ------- Plot (without solid mesh) -------
-            plot_results(fluid_mesh.mesh, uh, ph, t_val=t_val, basedir=dir_plots_fluid_only)
 
         wall_time = timer_total.stop()
         print("Total simulation wall time : {} sec".format(wall_time), "\n", flush=True)

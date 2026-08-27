@@ -10,41 +10,101 @@ import argparse
 from math import cos, pi as PI
 
 from user_inputs import *
-from domain_settings import create_brinkman_riis_bcs, time_varying_bc
-from obstacles import circleObstacle
-from post_processing import save_VTK, create_output_folders, plot_results, save_checkpoint
-from Solvers.Stokes_RIIS import solve_stokes_riis_initial
+import user_inputs.user_parameters as user_parameters
+from domain_settings import create_bcs_penalty, time_varying_bc
+from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
+from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
+from Solvers.Stokes_solver import solve_stokes_initial
+
 
 class RIIS_solver:
-    def __init__(self, moving=True):
-        self.moving = moving
 
-    def RIIS_solve(self, args=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
+    def __init__(self, moving=False, type_obstacle="cylinder", n=None, R=None, Re=None, eps=None):
+        self.moving = moving
+        self.mean = True
+        self.type_obstacle = type_obstacle
+        self.n = n if n is not None else user_parameters.n
+        self.R = R if R is not None else getattr(user_parameters, 'R', 1000.0)
+        self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.eps = eps if eps is not None else (8.0 / self.n)
+        self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
+
+    def RIIS_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
 
         # start total timer
         t_start = time()
 
-        # =========== DATA AND SOLVE ===========
+        eps_val = self.eps if self.eps is not None else (8.0 / self.n)
+
+        # ==================================
+        # CREATE MESH & OBSTACLE
+        # ==================================
+        if obstacle is not None:
+            self.obstacle = obstacle
+            if hasattr(self.obstacle, 'eps'):
+                self.obstacle.eps = eps_val
+        else:
+            if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+                if self.type_obstacle == "cylinder":
+                    print("\nObstacle: Cylinder")
+                    self.obstacle = circleObstacle(x_obs, y_obs, r_obs, riis_epsilon=eps_val)
+                elif self.type_obstacle == "square":
+                    print("\nObstacle: Square")
+                    self.obstacle = squareObstacle(x_obs, y_obs, side_length, riis_epsilon=eps_val)
+
+                if abs(y_obs - 0.5 * Ly) < 1e-6:
+                    print("\nSymmetric configuration: obstacle centered in the channel")
+                    self.symmetric = True
+                else:
+                    print("\nAsymmetric configuration: obstacle moved higher in the channel")
+                    self.symmetric = False
+            else:
+                self.symmetric = False
+                if self.type_obstacle == "line":
+                    print("\nObstacle: Line")
+                    self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val, thickness=line_thickness)
+                else:
+                    print("\nObstacle: Rotating Line")
+                    self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val)
+
+        if mesh is None:
+            mesh = RectangleMesh(self.n, max(4, int(round(self.n * Ly / Lx))), Lx, Ly)
+
+        # ==================================
+        # DATA AND SOLVER
+        # ==================================
         tol = 1e-10
-        eps = 8.0 / n
 
-        mesh = RectangleMesh(n, n // (Lx/Ly), Lx, Ly)
-
-        # Define the obstacle
-        self.obstacle = circleObstacle(y_obs, y_obs, r_obs)
+        T_end = float(t_final) if t_final is not None else 20.0
+        dt = float(dt) if dt is not None else 0.5
+        num_steps = max(1, int(round(T_end / dt)))
         
-        # Data
-        T_end = 10.0               # final time
-        num_steps = 20             # number of time steps
-        dt = T_end / num_steps     # time step size
-        mu = 0.1                   # dynamic viscosity
-        rho = 1                    # density
+        # Reynolds number
+        Re = self.Re
 
-        # RIIS Penalty Parameters
-        R = 1000.0
+        # Density   
+        rho = 1.0  
 
-        f = Constant((0, 0))
+        # Characteristic velocity
+        u_char = 1.0              # mean velocity
+
+        # Characteristic length
+        L_char = self.obstacle.get_characteristic_length() if hasattr(self.obstacle, 'get_characteristic_length') else 1.0
+
+        # Dynamic viscosity
+        mu = rho * L_char * u_char / Re
+
+        print(f"\nCharacteristic length L_char = {L_char}")
+        print(f"\nReynolds number Re = {Re} computed with u_characteristic = {u_char}\n")
+
+        f = f_custom(mesh) if callable(f_custom) else (f_custom if f_custom is not None else Constant((0, 0)))
+        u_ex_val = u_exact(mesh) if callable(u_exact) else u_exact
+        p_ex_val = p_exact(mesh) if callable(p_exact) else p_exact
+        g_ex_val = g_custom(mesh) if callable(g_custom) else g_custom
         t = Constant(0.0)
+
+        R = self.R
+        eps = self.obstacle.eps if hasattr(self.obstacle, 'eps') else eps_val
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
@@ -52,41 +112,64 @@ class RIIS_solver:
         W = V * Q
 
         # Define boundary conditions
-        bcs = create_brinkman_riis_bcs(W, mesh)
+        if u_ex_val is not None:
+            bcs = [
+                DirichletBC(W.sub(0), u_ex_val, 1),
+                DirichletBC(W.sub(0), u_ex_val, 3),
+                DirichletBC(W.sub(0), u_ex_val, 4)
+            ]
+            if g_ex_val is None:
+                bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
+                if p_ex_val is not None:
+                    bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
+        else:
+            bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
 
         # Define trial and test functions
         u, p = TrialFunctions(W)
         v, q = TestFunctions(W)
-        
+
         # Define functions for solutions at previous and current time steps
         uh_n = Function(V)
         sol = Function(W)
         uh, ph = sol.subfunctions
 
-        # Define variational problem
+        # Define expressions for RIIS
         phi_expr = self.obstacle.distExpr(mesh, t)
         delta_expr = self.obstacle.delta(mesh, t)
-        us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        us_expr = u_ex_val if u_ex_val is not None else as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
 
         w = Constant((0.0, 0.0))
 
-        a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
+        # ==================================
+        # DEFINE VARIATIONAL PROBLEM
+        # ==================================
+        a = Constant(rho)/Constant(dt)*inner(u, v)*dx \
               + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
-              + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+              + 2.0 * Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
               - div(v)*p*dx \
               + div(u)*q*dx \
-              + Constant(R/eps) * inner(u,v) * delta_expr * dx
+              + Constant(R / eps) * inner(u, v) * delta_expr * dx
         
-        L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx \
-              + inner(f,v)*dx \
-              + Constant(R/eps) * inner(us_expr,v) * delta_expr * dx
+        L = Constant(rho)/Constant(dt)*inner(uh_n, v)*dx \
+              + inner(f, v)*dx \
+              + Constant(R / eps) * inner(us_expr, v) * delta_expr * dx
 
+        if g_ex_val is not None:
+            ds_b = Measure("ds", domain=mesh)
+            L += inner(g_ex_val, v)*ds_b(2)
+
+        # =========================================
+        # Create output folders
+        # =========================================
         params = {
             'moving': self.moving,
-            'unsteady': True, # RIIS is always unsteady in this setup
-            'symmetric': False, # Not applicable but needed for path
-            'n': n,
-            'R': R
+            'obstacle': self.type_obstacle,
+            'symmetric': self.symmetric,
+            'n': self.n,
+            'R': R,
+            'Re': Re,
+            'is_mms': (u_exact is not None),
         }
         basedir, file_dict = create_output_folders('RIIS', params, extra_fields=['phi', 'delta'])
 
@@ -101,11 +184,9 @@ class RIIS_solver:
             else:
                 uh_n.assign(u_init)
         else:
-            print("Initializing velocity with stationary Stokes RIIS solver (t=0)...")
-            uh_stokes, _ = solve_stokes_riis_initial(
-                mesh=mesh, W=W, obstacle=self.obstacle,
-                type_obstacle="circle", n=n, R=R,
-                f_custom=f_custom, u_exact=u_exact, p_exact=p_exact, g_custom=g_custom
+            print("Initializing velocity with stationary Stokes solver (t=0)...")
+            uh_stokes, _ = solve_stokes_initial(
+                mesh=mesh, bcs=bcs, mu=mu, f_custom=f_custom, g_custom=g_custom, W=W
             )
             uh_n.assign(uh_stokes)
 
@@ -118,47 +199,45 @@ class RIIS_solver:
         deltaFun.interpolate(delta_expr)
 
         save_VTK(file_dict, t_val, uh, ph, phi=phiFun, delta=deltaFun)
+        save_checkpoint(basedir, t_val, mesh, self.moving, velocity=uh, pressure=ph, phi=phiFun, delta=deltaFun)
 
         for step in range(num_steps):
-
             # Update current time
-            t_val = (step + 1) * dt
+            t_val += dt
             print('t =', t_val)
             t.assign(t_val)
             time_varying_bc(t_val)
 
-            current_us_x = float(assemble(self.obstacle.us_x(t) * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
-
-            # Current Position of the cylinder
-            amplitude = 12 * r_obs
-            displ_x = amplitude * 0.5 * (1 - cos(0.2 * PI * t))
-            xc = self.obstacle.x_obs + displ_x
-            yc = self.obstacle.y_obs
-
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 
-            # Save solution to file (VTK/PVD)
             phiFun.interpolate(phi_expr)
             deltaFun.interpolate(delta_expr)
+            
             save_VTK(file_dict, t_val, uh, ph, phi=phiFun, delta=deltaFun)
 
             # Update previous solution
             uh_n.assign(uh)
 
+            # Print max velocity
+            print('\tu_max:', uh.dat.data.max())
+            
             save_checkpoint(basedir, t_val, mesh=None, moving=self.moving, velocity=uh, pressure=ph, phi=phiFun, delta=deltaFun)
             plot_results(mesh, uh, ph, t_val=t_val, basedir=basedir)
 
-            # Print max velocity
-            print('\tu_max:', uh.dat.data.max())
-
         wall_time = time() - t_start
 
-        print('Total wall time = {} seconds'.format(wall_time), "\n", flush = True)
+        print('Total wall time = {} seconds'.format(wall_time), "\n", flush=True)
+        return mesh, uh, ph
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes RIIS solver script')
+    parser.add_argument('--moving', action='store_true', help='Use moving obstacle')
+    parser.add_argument('--obstacle', type=str, default='cylinder',
+                        choices=['cylinder', 'square', 'line', 'rotating'],
+                        help='Type of obstacle to use in the simulation.')
     args = parser.parse_args()
-    
+
     # Istanziamo la classe e chiamiamo il solver
-    solver = RIIS_solver(moving=True)
+    solver = RIIS_solver(moving=args.moving, type_obstacle=args.obstacle)
     solver.RIIS_solve(args)

@@ -203,6 +203,84 @@ def load_brinkman_solution(obstacle_type: str = "square", n: int = 320, R_val: f
     return None, None, None
 
 
+def load_dlm_solution(obstacle_type: str = "square", n: int = 320, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
+    """
+    Checks for an existing DLM simulation in Plots/DLM/fixed/<obstacle>/symmetric/n{n}_Re{Re}/.
+    If t_final is specified, requires an exact match at t = t_final (returns None if not available).
+    Returns (mesh, uh, ph) or (None, None, None).
+    """
+    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
+    dlm_base = os.path.join(project_dir, "Plots", "DLM", "fixed", obstacle_type, sym_str)
+
+    if os.path.exists(dlm_base):
+        for folder in os.listdir(dlm_base):
+            if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                base_dir = os.path.join(dlm_base, folder)
+                mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+
+                if t_final is not None:
+                    vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
+                    press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
+                    if os.path.exists(vel_file):
+                        try:
+                            mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file if os.path.exists(press_file) else None)
+                            print(f"--- Found and loaded DLM solution (n={n}, Re={Re}, t={t_final:.2f}s) from {base_dir} ---")
+                            return mesh, u, p
+                        except Exception as e:
+                            print(f"Warning: Error loading DLM from {base_dir}: {e}")
+                else:
+                    mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
+                    if vel_file is not None:
+                        try:
+                            mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                            print(f"--- Found and loaded DLM solution (n={n}, Re={Re}, t={t_found:.2f}s) from {base_dir} ---")
+                            return mesh, u, p
+                        except Exception:
+                            pass
+    return None, None, None
+
+
+def load_riis_solution(obstacle_type: str = "square", n: int = 320, R_val: float = 1000.0, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
+    """
+    Checks for an existing RIIS simulation in Plots/RIIS/fixed/<obstacle>/symmetric/n{n}_R{R}_Re{Re}/.
+    If t_final is specified, requires an exact match at t = t_final (returns None if not available).
+    Returns (mesh, uh, ph) or (None, None, None).
+    """
+    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
+    riis_base = os.path.join(project_dir, "Plots", "RIIS", "fixed", obstacle_type, sym_str)
+
+    if os.path.exists(riis_base):
+        for folder in os.listdir(riis_base):
+            if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_", f"_R{R_val}"]
+                if any(rm in folder for rm in r_matches) or folder.endswith(f"_R{R_val}"):
+                    base_dir = os.path.join(riis_base, folder)
+                    mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+
+                    if t_final is not None:
+                        vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
+                        press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
+                        if os.path.exists(vel_file):
+                            try:
+                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file if os.path.exists(press_file) else None)
+                                print(f"--- Found and loaded RIIS solution (R={R_val:.1e}, t={t_final:.2f}s) from {base_dir} ---")
+                                return mesh, u, p
+                            except Exception as e:
+                                print(f"Warning: Error loading RIIS from {base_dir}: {e}")
+                    else:
+                        mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
+                        if vel_file is not None:
+                            try:
+                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                print(f"--- Found and loaded RIIS solution (R={R_val:.1e}, t={t_found:.2f}s) from {base_dir} ---")
+                                return mesh, u, p
+                            except Exception:
+                                pass
+    return None, None, None
+
+
+
+
 def extract_probe_history(case_dir: str, probe_pt: Tuple[float, float] = (1.5, 0.5)):
     """
     Extracts time history of velocity (u_x, u_y) at probe_pt across all saved velocity checkpoints.

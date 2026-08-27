@@ -75,8 +75,10 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
     # Sovrapposizione del cilindro solido (se presente)
 
     if solid_mesh is not None:
+        sm = solid_mesh.mesh if hasattr(solid_mesh, 'mesh') else solid_mesh
         for ax in axes:
-            triplot(solid_mesh, axes=ax, interior_kw={"color": "red", "linewidth": 0.6})
+            triplot(sm, axes=ax, interior_kw={"color": "red", "linewidth": 0.6})
+
 
     for ax in axes:
         ax.set_xlim(xmin, xmax)

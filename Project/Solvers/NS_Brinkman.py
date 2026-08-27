@@ -216,19 +216,6 @@ class Brinkman_solver:
             print('t =', t_val)
             t.assign(t_val)
             time_varying_bc(t_val)
-
-            dx_val = float(self.obstacle.displ_x(t_val)) if hasattr(self.obstacle, 'displ_x') else 0.0
-            dy_val = float(self.obstacle.displ_y(t_val)) if hasattr(self.obstacle, 'displ_y') else 0.0
-
-            if hasattr(self.obstacle, 'x_obs') and hasattr(self.obstacle, 'y_obs'):
-                xc = self.obstacle.x_obs + dx_val
-                yc = self.obstacle.y_obs + dy_val
-            else:
-                A_t = self.obstacle.A(t_val) if hasattr(self.obstacle, 'A') else [0, 0]
-                xc, yc = A_t[0], A_t[1]
-
-            us_x_expr = self.obstacle.us_x(t)
-            current_us_x = float(assemble(us_x_expr * dx(domain=mesh)) / assemble(Constant(1.0) * dx(domain=mesh)))
     
             solve(a == L, sol, bcs=bcs, solver_parameters={'ksp_type': 'preonly', 'pc_type': 'lu', 'pc_factor_mat_solver_type': 'mumps'})
 

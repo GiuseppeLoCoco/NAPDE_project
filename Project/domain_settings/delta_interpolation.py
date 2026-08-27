@@ -44,5 +44,3 @@ def interpolate_nonmatching_mesh(source_func, target_space):
     return res
 
 
-# Alias for compatibility with typos in caller scripts
-interpolate_nonmetching_mesh_delta = interpolate_nonmatching_mesh_delta
