@@ -39,7 +39,7 @@ class Brinkman_solver:
         if obstacle is not None:
             self.obstacle = obstacle
         else:
-            if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+            if self.type_obstacle not in ["line", "rotating", "rotating_line"]:
                 if self.type_obstacle == "cylinder":
                     print("\nObstacle: Cylinder")
                     self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
@@ -57,10 +57,10 @@ class Brinkman_solver:
                 self.symmetric = False
                 if self.type_obstacle == "line":
                     print("\nObstacle: Line")
-                    self.obstacle = lineObstacle(xA, xB, yA, yB)
+                    self.obstacle = lineObstacle(xA, yA, xB, yB, thickness=line_thickness)
                 else:
                     print("\nObstacle: Rotating Line")
-                    self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
+                    self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, thickness=line_thickness)
 
         if mesh is None:
             mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
@@ -101,16 +101,6 @@ class Brinkman_solver:
 
         R = self.R
 
-        if obstacle is None:
-            if self.type_obstacle == "square":
-                self.obstacle = squareObstacle(x_obs, y_obs, side_length)
-                self.moving = False
-            elif self.type_obstacle == "cylinder":
-                self.obstacle = circleObstacle(x_obs, y_obs, r_obs)
-            elif self.type_obstacle == "line":
-                self.obstacle = lineObstacle(xA, xB, yA, yB)
-            elif self.type_obstacle == "rotating":
-                self.obstacle = rotatingLineObstacle(xA, xB, yA, yB)
 
         # Define function spaces
         V = VectorFunctionSpace(mesh, "CG", 2)
@@ -143,7 +133,15 @@ class Brinkman_solver:
         # Define expressions for Brinkman
         phi_expr = self.obstacle.distExpr(mesh, t)
         chi_expr = self.obstacle.chi(mesh, t)
-        us_expr = u_ex_val if u_ex_val is not None else as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        if u_ex_val is not None:
+            us_expr = u_ex_val
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_field'):
+            us_expr = self.obstacle.us_field(mesh, t)
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+            us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        else:
+            us_expr = Constant((0.0, 0.0))
+
 
         w = Constant((0.0, 0.0))
 
@@ -241,8 +239,14 @@ class Brinkman_solver:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes Brinkman solver script')
+    parser.add_argument('--moving', action='store_true', default=True, help='Use moving obstacle')
+    parser.add_argument('--obstacle', type=str, default='cylinder',
+                        choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
+                        help='Type of obstacle to use in the simulation.')
     args = parser.parse_args()
 
     # Istanziamo la classe e chiamiamo il solver
-    solver = Brinkman_solver(moving=True, type_obstacle="square")
-    solver.Brinkman_solve(args)
+    solver = Brinkman_solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver.Brinkman_solve()
+
+

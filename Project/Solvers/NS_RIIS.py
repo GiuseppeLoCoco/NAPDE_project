@@ -44,7 +44,7 @@ class RIIS_solver:
             if hasattr(self.obstacle, 'eps'):
                 self.obstacle.eps = eps_val
         else:
-            if not self.type_obstacle == "line" and not self.type_obstacle == "rotating":
+            if self.type_obstacle not in ["line", "rotating", "rotating_line"]:
                 if self.type_obstacle == "cylinder":
                     print("\nObstacle: Cylinder")
                     self.obstacle = circleObstacle(x_obs, y_obs, r_obs, riis_epsilon=eps_val)
@@ -65,7 +65,7 @@ class RIIS_solver:
                     self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val, thickness=line_thickness)
                 else:
                     print("\nObstacle: Rotating Line")
-                    self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val)
+                    self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val, thickness=line_thickness)
 
         if mesh is None:
             mesh = RectangleMesh(self.n, max(4, int(round(self.n * Ly / Lx))), Lx, Ly)
@@ -137,7 +137,15 @@ class RIIS_solver:
         # Define expressions for RIIS
         phi_expr = self.obstacle.distExpr(mesh, t)
         delta_expr = self.obstacle.delta(mesh, t)
-        us_expr = u_ex_val if u_ex_val is not None else as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        if u_ex_val is not None:
+            us_expr = u_ex_val
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_field'):
+            us_expr = self.obstacle.us_field(mesh, t)
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+            us_expr = as_vector((self.obstacle.us_x(t), self.obstacle.us_y(t)))
+        else:
+            us_expr = Constant((0.0, 0.0))
+
 
         w = Constant((0.0, 0.0))
 
@@ -232,12 +240,12 @@ class RIIS_solver:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Stokes RIIS solver script')
-    parser.add_argument('--moving', action='store_true', help='Use moving obstacle')
+    parser.add_argument('--moving', action='store_true', default=True, help='Use moving obstacle')
     parser.add_argument('--obstacle', type=str, default='cylinder',
-                        choices=['cylinder', 'square', 'line', 'rotating'],
+                        choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
     args = parser.parse_args()
 
     # Istanziamo la classe e chiamiamo il solver
     solver = RIIS_solver(moving=args.moving, type_obstacle=args.obstacle)
-    solver.RIIS_solve(args)
+    solver.RIIS_solve()

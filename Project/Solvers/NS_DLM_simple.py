@@ -65,7 +65,7 @@ class NS_DLM_Solver:
             self.obstacle = lineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
             self.moving = False  # Fixed line obstacle this context
             self.symmetric = False # Line obstacles are generally not symmetric in
-        elif self.type_obstacle == "rotating_line":
+        elif self.type_obstacle in ["rotating_line", "rotating"]:
             print("\nObstacle: Rotating Line")
             # Correct order of arguments for rotatingLineObstacle
             self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=line_thickness, thickness=line_thickness)
@@ -188,6 +188,8 @@ class NS_DLM_Solver:
         uf_ = Function(R)  # fluid velocity interpolated on solid mesh  
         if u_ex_val is not None:
             us_.interpolate(u_ex_val)
+        elif self.obstacle is not None and hasattr(self.obstacle, 'velocity'):
+            us_.interpolate(self.obstacle.velocity(init_coords, 0.0))
         elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
             us_.interpolate(as_vector([self.obstacle.us_x(0.0), self.obstacle.us_y(0.0)]))
         else:
@@ -306,29 +308,37 @@ class NS_DLM_Solver:
             # Update solid position and velocity
             Dp_old.assign(Dp_new)
 
-            if self.moving:
-                # Update the displacement based on the prescribed kinematics of the obstacle
-                dx_expr = self.obstacle.displ_x(t_val)
-                dy_expr = self.obstacle.displ_y(t_val)
-                
-                Dp_new.interpolate(as_vector([dx_expr, dy_expr]))
-                
-                # Update mesh coorinates based on the new displacement
+            if self.moving and self.obstacle is not None:
+                # Update displacement and solid mesh coordinates
+                if hasattr(self.obstacle, 'displacement'):
+                    Dp_new.interpolate(self.obstacle.displacement(init_coords, t_val))
+                else:
+                    dx_expr = self.obstacle.displ_x(t_val)
+                    dy_expr = self.obstacle.displ_y(t_val)
+                    Dp_new.interpolate(as_vector([dx_expr, dy_expr]))
+
                 solid_mesh.coordinates.assign(init_coords + Dp_new)
-                
+
                 # Update solid velocity us_
-                us_x_expr = self.obstacle.us_x(t_val)
-                us_y_expr = self.obstacle.us_y(t_val)
-                us_.interpolate(as_vector([us_x_expr, us_y_expr]))
+                if hasattr(self.obstacle, 'velocity'):
+                    us_.interpolate(self.obstacle.velocity(init_coords, t_val))
+                elif hasattr(self.obstacle, 'us_x'):
+                    us_x_expr = self.obstacle.us_x(t_val)
+                    us_y_expr = self.obstacle.us_y(t_val)
+                    us_.interpolate(as_vector([us_x_expr, us_y_expr]))
             else:
                 # Fixed obstacle
                 Dp_new.assign(0.0)
                 if u_ex_val is not None:
                     us_.interpolate(u_ex_val)
+                elif self.obstacle is not None and hasattr(self.obstacle, 'velocity'):
+                    us_.interpolate(self.obstacle.velocity(init_coords, t_val))
                 elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
                     us_.interpolate(as_vector([self.obstacle.us_x(t_val), self.obstacle.us_y(t_val)]))
                 else:
                     us_.assign(0.0)
+
+
             
 
             # Update Lagrange multiplier for new time step
@@ -372,12 +382,13 @@ class NS_DLM_Solver:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Navier-Stokes DLM Solver')
+    parser.add_argument('--moving', action='store_true', default=True, help='Use moving obstacle')
     parser.add_argument('--obstacle', type=str, default='cylinder',
-                        choices=['cylinder', 'square', 'line', 'rotating_line'],
+                        choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
     
     args = parser.parse_args()
 
     # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
-    solver = NS_DLM_Solver(type_obstacle=args.obstacle)
-    solver.NS_DLM_Solve(args)
+    solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver.NS_DLM_Solve()

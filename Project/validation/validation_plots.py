@@ -221,7 +221,7 @@ def plot_spatial_convergence_summary(resolutions, dx_h, err_L2_u, err_H1_u, err_
     Generates 3-panel figure with log-log convergence curve, vertical centerline velocity profile,
     and structured error/rate summary tables.
     """
-    case_name = "Brinkman" if solver_type.lower() == "brinkman" else "DLM"
+    case_name = "Brinkman" if solver_type.lower() == "brinkman" else ("RIIS" if solver_type.lower() == "riis" else "DLM")
 
     fig = plt.figure(figsize=(20, 6.5))
     gs = fig.add_gridspec(1, 3, width_ratios=[1.25, 1.0, 1.25])

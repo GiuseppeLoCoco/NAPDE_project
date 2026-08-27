@@ -105,11 +105,13 @@ class Conforming_solver:
         sol = Function(W)
         uh, ph = sol.subfunctions
 
-        # Define variational problem
-        if self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+        if self.obstacle is not None and hasattr(self.obstacle, 'us_field'):
+            us_expr = self.obstacle.us_field(mesh, t_param)
+        elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
             us_expr = as_vector((self.obstacle.us_x(t_param), self.obstacle.us_y(t_param)))
         else:
             us_expr = Constant((0.0, 0.0))
+
 
         if self.moving:
             w = us_expr
@@ -188,7 +190,7 @@ class Conforming_solver:
             if self.moving:
                 print("Re-meshing for moving obstacle...")
                 # Create new mesh for the current time
-                new_mesh = conforming_mesh(Lx, Ly, self.obstacle, n, t_val=t_val, structured=self.structured)
+                new_mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n, t_val=t_val, structured=self.structured)
 
                 # Define new function spaces
                 V_new = VectorFunctionSpace(new_mesh, "CG", 2)
@@ -213,7 +215,7 @@ class Conforming_solver:
 
                 a = Constant(rho)/Constant(dt)*inner(u,v)*dx \
                       + Constant(rho)*inner(dot(uh_n - w, nabla_grad(u)), v)*dx \
-                      + Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
+                      + 2.0 * Constant(mu)*inner(sym(grad(u)), sym(grad(v)))*dx \
                       - div(v)*p*dx \
                       + div(u)*q*dx
                 L = Constant(rho)/Constant(dt)*inner(uh_n,v)*dx + inner(f,v)*dx
@@ -245,7 +247,11 @@ class Conforming_solver:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Navier-Stokes Conforming solver script')
+    parser.add_argument('--moving', action='store_true', default=True, help='Use moving obstacle')
+    parser.add_argument('--obstacle', type=str, default='cylinder',
+                        choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
+                        help='Type of obstacle to use in the simulation.')
     args = parser.parse_args()
     
-    solver = Conforming_solver(moving=False, type_obstacle="square")
-    solver.conforming_solve(args)
+    solver = Conforming_solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver.conforming_solve()

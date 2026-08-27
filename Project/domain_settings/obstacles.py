@@ -43,8 +43,18 @@ class circleObstacle:
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
+  def displacement(self, X0, t):
+    return as_vector([self.displ_x(t), self.displ_y(t)])
+
+  def velocity(self, X0, t):
+    return as_vector([self.us_x(t), self.us_y(t)])
+
+  def us_field(self, mesh, t):
+    return as_vector([self.us_x(t), self.us_y(t)])
+
   def get_characteristic_length(self):
         return 2.0 * self.r
+
 
 # ==========================
 # Define segment obstacle
@@ -98,6 +108,15 @@ class lineObstacle:
     abs_dist = conditional(dist < 0.0, -dist, dist)
     return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
+  def displacement(self, X0, t):
+    return as_vector([self.displ_x(t), self.displ_y(t)])
+
+  def velocity(self, X0, t):
+    return as_vector([self.us_x(t), self.us_y(t)])
+
+  def us_field(self, mesh, t):
+    return as_vector([self.us_x(t), self.us_y(t)])
+
   def get_characteristic_length(self):
         return self.length
 
@@ -120,8 +139,8 @@ class lineObstacle:
 
 # ------- Segment rotating counterclockwise --------
 class rotatingLineObstacle(lineObstacle):
-  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05):
-    super().__init__(xA, yA, xB, yB, riis_epsilon)
+  def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05, thickness=0.02):
+    super().__init__(xA, yA, xB, yB, riis_epsilon, thickness)
     self.theta_max = PI / 4.0
 
   def theta(self, t):
@@ -139,6 +158,34 @@ class rotatingLineObstacle(lineObstacle):
     dy = self.B_init[1] - self.A_init[1]
     return [self.A_init[0] + dx * cos(th) - dy * sin(th),
             self.A_init[1] + dx * sin(th) + dy * cos(th)]
+
+  def displacement(self, X0, t):
+    from firedrake import sin, cos, as_vector
+    th = self.theta(t)
+    xA, yA = self.A_init[0], self.A_init[1]
+    dX0 = X0[0] - xA
+    dY0 = X0[1] - yA
+    dx = dX0 * (cos(th) - 1.0) - dY0 * sin(th)
+    dy = dX0 * sin(th) + dY0 * (cos(th) - 1.0)
+    return as_vector([dx, dy])
+
+  def velocity(self, X0, t):
+    from firedrake import sin, cos, as_vector
+    th = self.theta(t)
+    dt = self.dottheta(t)
+    xA, yA = self.A_init[0], self.A_init[1]
+    dX0 = X0[0] - xA
+    dY0 = X0[1] - yA
+    us_x = dt * (-dX0 * sin(th) - dY0 * cos(th))
+    us_y = dt * ( dX0 * cos(th) - dY0 * sin(th))
+    return as_vector([us_x, us_y])
+
+  def us_field(self, mesh, t):
+    from firedrake import SpatialCoordinate, as_vector
+    X = SpatialCoordinate(mesh)
+    dt = self.dottheta(t)
+    xA, yA = self.A_init[0], self.A_init[1]
+    return as_vector([-dt * (X[1] - yA), dt * (X[0] - xA)])
             
   def us_x(self, t):
     from firedrake import sin, cos
@@ -155,6 +202,20 @@ class rotatingLineObstacle(lineObstacle):
     dx = self.B_init[0] - self.A_init[0]
     dy = self.B_init[1] - self.A_init[1]
     return dt * (dx * cos(th) - dy * sin(th))
+
+  def get_gmsh_rectangle_params(self, t_val):
+    th = float(self.theta(t_val))
+    x_center = (self.A_init[0] + self.B_init[0]) / 2.0
+    y_center = (self.A_init[1] + self.B_init[1]) / 2.0
+    
+    xmin = x_center - self.length / 2.0
+    ymin = y_center - self.thickness / 2.0
+    dx = self.length
+    dy = self.thickness
+    
+    return xmin, ymin, dx, dy, self.A_init[0], self.A_init[1], th
+
+
 
 
 # ==========================
@@ -220,6 +281,15 @@ class squareObstacle:
       abs_dist = conditional(dist < 0.0, -dist, dist)
       return conditional(abs_dist < self.eps, (1.0 + cos(pi * dist / self.eps)) / (2.0 * self.eps), 0.0)
 
+  def displacement(self, X0, t):
+      return Constant((0.0, 0.0))
+
+  def velocity(self, X0, t):
+      return Constant((0.0, 0.0))
+
+  def us_field(self, mesh, t):
+      return Constant((0.0, 0.0))
+
   def get_characteristic_length(self):
         return self.side_length
 
@@ -229,8 +299,9 @@ class squareObstacle:
 # ==========================
 class BufferObstacle:
     """Obstacle representing the upstream buffer layer region (x < 0)."""
-    def __init__(self, L_buf: float = 1.0):
+    def __init__(self, L_buf: float = 1.0, riis_epsilon: float = 0.05):
         self.L_buf = L_buf
+        self.eps = riis_epsilon
 
     def chi(self, mesh, t=None):
         X = SpatialCoordinate(mesh)
@@ -239,6 +310,22 @@ class BufferObstacle:
     def distExpr(self, mesh, t=None):
         X = SpatialCoordinate(mesh)
         return X[0]
+
+    def delta(self, mesh, t=None):
+        from firedrake import pi, cos
+        dist = self.distExpr(mesh, t)
+        abs_dist = conditional(dist < 0.0, -dist, dist)
+        eps = getattr(self, 'eps', 0.05)
+        return conditional(abs_dist < eps, (1.0 + cos(pi * dist / eps)) / (2.0 * eps), 0.0)
+
+    def displacement(self, X0, t):
+        return Constant((0.0, 0.0))
+
+    def velocity(self, X0, t):
+        return Constant((0.0, 0.0))
+
+    def us_field(self, mesh, t):
+        return Constant((0.0, 0.0))
 
     def us_x(self, t=None):
         return Constant(0.0)

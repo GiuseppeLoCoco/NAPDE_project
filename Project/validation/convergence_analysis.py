@@ -4,7 +4,7 @@ Convergence analysis script for stationary flow past obstacle (Square or Cylinde
 Features:
   - User-configurable parameters set directly at the top of the file / __main__ block.
   - Runs/checks Conforming reference simulation for refinement `refinement_conforming`.
-  - Performs a `for n in resolutions:` loop executing the specified solver (Brinkman or DLM).
+  - Performs a `for n in resolutions:` loop executing the specified solver (Brinkman, DLM, or RIIS).
   - Loads the saved checkpoint solutions at final time t = T_end.
   - Calculates fluid-restricted velocity (L2, H1) errors and pressure L2 error.
   - Calculates empirical convergence rates and plots log-log error curves vs mesh size h = 1/n.
@@ -286,7 +286,7 @@ def run_convergence_analysis(
     # -------------------------------------------------------------------------
     # STEP 4: LOG-LOG CONVERGENCE PLOT, VERTICAL PROFILE AND SUMMARY TABLES
     # -------------------------------------------------------------------------
-    case_name = "Brinkman" if solver_type.lower() == "brinkman" else "DLM"
+    case_name = "Brinkman" if solver_type.lower() == "brinkman" else ("RIIS" if solver_type.lower() == "riis" else "DLM")
     out_dir = os.path.join(project_dir, "Plots", case_name)
     os.makedirs(out_dir, exist_ok=True)
     plot_filename = os.path.join(out_dir, f"convergence_loglog_{case_name}_{obstacle_type}_Re{Re}.png")
@@ -320,15 +320,15 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [40, 80, 120, 160]        # Mesh refinement levels n to simulate
-    obstacle_type = "square"                     # "square" or "cylinder" (both stationary/fixed)
-    solver_type = "Brinkman"                          # "Brinkman" or "dlm"
-    Re = 40.0                                    # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
-    refinement_conforming = 200                # Exact conforming reference mesh refinement
-    R_penalty = 100000.0                         # Resistive parameter R (for Brinkman solver)
-    dt = 0.5                                     # Time step size dt (can be None to use solver default)
-    t_final = 40.0                               # Final simulation time step t_final for DLM / Brinkman
-    t_final_conforming = 20.0                    # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
+    resolutions = [40, 80, 120, 160,240]        # Mesh refinement levels n to simulate
+    obstacle_type = "square"                # "square" or "cylinder" (both stationary/fixed)
+    solver_type = "RIIS"                    # "Brinkman", "dlm", or "RIIS"
+    Re = 40.0                               # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
+    refinement_conforming = 320             # Exact conforming reference mesh refinement
+    R_penalty = 100000.0                    # Resistive parameter R (for Brinkman / RIIS solver)
+    dt = 0.5                                # Time step size dt (can be None to use solver default)
+    t_final = 40.0                          # Final simulation time step t_final for DLM / Brinkman / RIIS
+    t_final_conforming = 40.0               # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
     # =========================================================================
 
     run_convergence_analysis(
