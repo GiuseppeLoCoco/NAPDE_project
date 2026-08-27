@@ -237,7 +237,7 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
         output_dir = os.path.join(project_dir, "Plots", "Validation", "L2_unsteady_Re80")
     os.makedirs(output_dir, exist_ok=True)
 
-    Re = 80.0
+    Re = 200.0
     D = side_length
     U_mean = 1.0
     probe_pt = (1.5, 0.5)
@@ -382,11 +382,11 @@ if __name__ == "__main__":
 
     # Tempo finale di simulazione
     T_end_steady = 40.0
-    T_end_unsteady = 25.0
+    T_end_unsteady =15.0
 
     # Lista di valori di eta (permeabilità = 1/R) da testare
     eta_list_steady = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
-    eta_list_unsteady = [1e-2, 1e-4, 1e-6]
+    eta_list_unsteady = [1e-2, 1e-4, 1e-6,1e-8]
     # =========================================================================
 
     parser = argparse.ArgumentParser(description="L2 Penalization Validation (Angot et al. 1999)")

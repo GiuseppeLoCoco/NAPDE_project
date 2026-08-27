@@ -43,13 +43,13 @@ from Solvers.NS_Brinkman import Brinkman_solver
 
 class ManufacturedSolution:
     """Exact divergence-free analytical solution and corresponding Navier-Stokes body force."""
-    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0):
+    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0, L_char: float = 1.0):
         self.Lx = Lx
         self.Ly = Ly
         self.Re = Re
         self.rho = rho
         self.u_char = 1.0
-        self.L_char = 0.2
+        self.L_char = L_char  # Characteristic scale matching channel/buffer (1.0)
         self.mu = self.rho * self.L_char * self.u_char / self.Re
 
     def u_exact(self, mesh):
@@ -104,6 +104,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
     )
@@ -252,13 +253,13 @@ def run_r_sweep_analysis(
 
 if __name__ == "__main__":
     run_r_sweep_analysis(
-        R_values=[1.0e3, 1.0e4, 1.0e5, 1.0e6, 1.0e7],
-        fixed_n=60,
+        R_values=[1.0e2, 1.0e4, 1.0e6],
+        fixed_n=120,
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
-        T_end=5.0,
-        dt=0.2,
+        T_end=10,
+        dt=0.5,
         output_dir="results_buffer_recovery_v2"
     )

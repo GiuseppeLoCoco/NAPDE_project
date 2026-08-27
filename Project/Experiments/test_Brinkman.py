@@ -308,13 +308,13 @@ def run_experiment_pipeline(
 
 if __name__ == "__main__":
     run_experiment_pipeline(
-        resolutions=[20, 30, 40, 50, 60],       # Resolutions
+        resolutions=[40,80,120],       # Resolutions
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,                      # Length of the buffer region
         Re=40.0,
-        R_penalty=1.0e4,                # Brinkman penalty term
-        T_end=2.0,                      # Final time
-        dt=0.2,
-        output_dir="results_buffer_recovery"
+        R_penalty=1.0e6,                # Brinkman penalty term
+        T_end=10,                      # Final time
+        dt=0.5,
+        output_dir="results_Brinkman_buffer_recovery"
     )
