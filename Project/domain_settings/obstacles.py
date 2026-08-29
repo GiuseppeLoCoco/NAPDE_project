@@ -96,7 +96,7 @@ class lineObstacle:
     abscissa_thresh = conditional(abscissa < 0, 0.0, conditional(abscissa > 1, 1.0, abscissa))
     point_x = A_t[0] + abscissa_thresh * (B_t[0] - A_t[0])
     point_y = A_t[1] + abscissa_thresh * (B_t[1] - A_t[1])
-    return sqrt((X[0] - point_x)**2 + (X[1] - point_y)**2)
+    return sqrt((X[0] - point_x)**2 + (X[1] - point_y)**2) - self.thickness / 2.0
 
   def chi(self, mesh, t):
     dist = self.distExpr(mesh, t)
