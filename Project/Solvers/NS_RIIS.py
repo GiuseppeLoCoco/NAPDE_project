@@ -75,8 +75,8 @@ class RIIS_solver:
         # ==================================
         tol = 1e-10
 
-        T_end = float(t_final) if t_final is not None else 20.0
-        dt = float(dt) if dt is not None else 0.5
+        T_end = float(t_final) if t_final is not None else 10.0
+        dt = float(dt) if dt is not None else 0.1
         num_steps = max(1, int(round(T_end / dt)))
         
         # Reynolds number

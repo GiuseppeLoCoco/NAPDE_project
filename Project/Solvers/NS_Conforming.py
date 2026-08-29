@@ -60,8 +60,8 @@ class Conforming_solver:
                 mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
         
         tol = 1e-10
-        T_end = float(t_final) if t_final is not None else 20.0
-        dt = float(dt) if dt is not None else 0.5
+        T_end = float(t_final) if t_final is not None else 5.0
+        dt = float(dt) if dt is not None else 0.1
         num_steps = max(1, int(round(T_end / dt)))
 
         # Reynolds number
@@ -209,6 +209,14 @@ class Conforming_solver:
                 v, q = TestFunctions(W)
                 sol = Function(W)
                 uh, ph = sol.subfunctions
+
+                # Update obstacle velocity w on the new mesh
+                if self.obstacle is not None and hasattr(self.obstacle, 'us_field'):
+                    w = self.obstacle.us_field(mesh, t_param)
+                elif self.obstacle is not None and hasattr(self.obstacle, 'us_x'):
+                    w = as_vector((self.obstacle.us_x(t_param), self.obstacle.us_y(t_param)))
+                else:
+                    w = Constant((0.0, 0.0))
 
                 # Re-create BCs and variational forms on the new spaces
                 bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)

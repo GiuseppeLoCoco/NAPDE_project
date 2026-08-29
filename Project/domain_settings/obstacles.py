@@ -141,15 +141,24 @@ class lineObstacle:
 class rotatingLineObstacle(lineObstacle):
   def __init__(self, xA, yA, xB, yB, riis_epsilon=0.05, thickness=0.02):
     super().__init__(xA, yA, xB, yB, riis_epsilon, thickness)
-    self.theta_max = PI / 4.0
+    self.theta_max = PI / 18.0  # +/- 10 degrees
 
   def theta(self, t):
-    from firedrake import cos, pi
-    return -0.5 * (1.0 - cos(2.0 * pi * t)) * self.theta_max
+    from firedrake import sin, pi
+    return self.theta_max * sin(2.0 * pi * t)
   
   def dottheta(self, t):
-    from firedrake import sin, pi
-    return -pi * sin(2.0 * pi * t) * self.theta_max
+    from firedrake import cos, pi
+    return 2.0 * pi * self.theta_max * cos(2.0 * pi * t)
+
+  def displ_x(self, t):
+    return Constant(0.0)
+
+  def displ_y(self, t):
+    return Constant(0.0)
+
+  def A(self, t):
+    return [self.A_init[0], self.A_init[1]]
 
   def B(self, t):
     from firedrake import sin, cos
@@ -261,15 +270,6 @@ class squareObstacle:
 
       return dist_ext + dist_int
 
-      """
-      X = SpatialCoordinate(mesh)
-      # Distanze dai bordi lungo x e y
-      dx = conditional(X[0] - self.x_obs < 0, self.x_obs - X[0], X[0] - self.x_obs) - self.half_side
-      dy = conditional(X[1] - self.y_obs < 0, self.y_obs - X[1], X[1] - self.y_obs) - self.half_side
-      
-      # Max(dx, dy) per la distanza (SDF) dal quadrato
-      return conditional(dx > dy, dx, dy)
-      """
 
   def chi(self, mesh, t):
       dist = self.distExpr(mesh, t)

@@ -14,6 +14,14 @@ def get_inflow_profile(mesh, type_obstacle):
         # Parabolic inflow profile without "start-up" phase for a channel with height h = 1.0
         inflow_x = (1.5) * 4.0 * y * (1.0 - y)
         return as_vector([inflow_x, 0.0])
+    elif type_obstacle in ["line", "rotating", "rotating_line"]:
+        # Parabolic inflow profile with "start-up" phase
+        inflow_x = (1.5) * (1.0 - exp(-t_param)) * 4.0 * y * (1.0 - y)
+        return as_vector([inflow_x, 0.0])
+    else:
+        # Default parabolic profile
+        inflow_x = (1.5) * 4.0 * y * (1.0 - y)
+        return as_vector([inflow_x, 0.0])
 
 def time_varying_bc(tt):
     t_param.assign(tt)
