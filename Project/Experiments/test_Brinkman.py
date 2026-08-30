@@ -25,50 +25,13 @@ _trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
 from firedrake import (
     RectangleMesh, Constant, SpatialCoordinate,
     as_vector, inner, dot, grad, sym, div, nabla_grad, dx, sqrt,
-    assemble, conditional, lt, ge, sin, cos, pi
+    assemble, conditional, lt, ge, sin, cos, pi, Identity
 )
 
 from domain_settings.obstacles import BufferObstacle
+from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_Conforming import Conforming_solver
-
-
-# =============================================================================
-# 1. MMS EXACT SOLUTION & FORCING DEFINITION
-# =============================================================================
-
-class ManufacturedSolution:
-    def __init__(self, Lx: float = 4.0, Ly: float = 1.0, Re: float = 40.0, rho: float = 1.0, L_char: float = 1.0):
-        self.Lx = Lx
-        self.Ly = Ly
-        self.Re = Re
-        self.rho = rho
-        self.u_char = 1.0
-        self.L_char = L_char  # Characteristic length for Reynolds number matching channel/buffer (1.0)
-        self.mu = self.rho * self.L_char * self.u_char / self.Re
-
-    def u_exact(self, mesh):
-        X = SpatialCoordinate(mesh)
-        x, y = X[0], X[1]
-        u_x = 1.0 + sin(pi * x / self.Lx) * sin(2.0 * pi * y / self.Ly)
-        u_y = (self.Ly / (2.0 * self.Lx)) * cos(pi * x / self.Lx) * (cos(2.0 * pi * y / self.Ly) - 1.0)
-        return as_vector([u_x, u_y])
-
-    def p_exact(self, mesh):
-        X = SpatialCoordinate(mesh)
-        x, y = X[0], X[1]
-        return sin(pi * x / self.Lx) * sin(pi * y / self.Ly)
-
-    def f_forcing(self, mesh):
-        """Compute the force of the exact solution for the Navier-Stokes problem"""
-        X = SpatialCoordinate(mesh)
-        u_ex = self.u_exact(mesh)
-        p_ex = self.p_exact(mesh)
-        
-        adv = self.rho * dot(u_ex, nabla_grad(u_ex))
-        diff = - div(2.0 * self.mu * sym(grad(u_ex)))
-        press = grad(p_ex)
-        return adv + diff + press
 
 
 
@@ -92,6 +55,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        g_custom=mms.g_exact,
         u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
@@ -127,6 +91,7 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
+        g_custom=mms.g_exact,
         u_init=mms.u_exact,
         dt=dt,
         t_final=T_end
