@@ -65,13 +65,12 @@ from validation.validation_plots import (
 # EXPERIMENT 1: STEADY STATE CONVERGENCE & TABLE 1 (Re = 40)
 # =============================================================================
 
-def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=None):
+def run_steady_experiment(eta_list=None, n=320, T_end=40.0, dt=0.2, structured=True, output_dir=None):
     """
-    Reproduces Section 6.1 (Steady case at Re = 40):
-    - Solves conforming reference using Conforming_solver.
+    Reproduces Section 6.1 (Steady case at Re = 40, Table 1 & Fig. 3):
+    - Solves conforming reference (Dirichlet on square) using Conforming_solver.
     - Solves penalized solutions using Brinkman_solver for each eta in eta_list (R = 1/eta).
-    - Computes ||u_eta||_L2(Omega_s) and ||u_eta - u_ref||_L2(Omega_f).
-    - Measures convergence rates alpha for O(eta^alpha) (Table 1).
+    - Computes L2 errors in solid Omega_s and fluid Omega_f and spatial convergence rates.
     - Generates Fig. 3 plots (pressure and vorticity fields).
     """
     if eta_list is None:
@@ -95,7 +94,7 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
     ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re, t_final=T_end)
     if ref_mesh is None:
         print("\n--- Running Conforming Reference Solver ---")
-        conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=True)
+        conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=structured)
         ref_mesh, u_ref, p_ref = conf_solver.conforming_solve(
             obstacle=obs,
             dt=dt,
@@ -110,7 +109,7 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
         p_mesh, uh, ph = load_brinkman_solution(obstacle_type="square", n=n, R_val=R_val, Re=Re, t_final=T_end)
         if p_mesh is None:
             print(f"\n--- Running Brinkman_solver with eta = {eta:.1e} (R = {R_val:.1e}) ---")
-            brink_solver = Brinkman_solver(moving=False, type_obstacle="square", n=n, R=R_val, Re=Re)
+            brink_solver = Brinkman_solver(moving=False, type_obstacle="square", n=n, R=R_val, Re=Re, structured=structured)
             p_mesh, uh, ph = brink_solver.Brinkman_solve(
                 obstacle=obs,
                 dt=dt,
@@ -131,11 +130,22 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
         err_fluid_sq = assemble(chi_f * inner(err_fluid_vec, err_fluid_vec) * dx)
         err_fluid = math.sqrt(err_fluid_sq)
 
+        # L2 error norm of pressure in fluid domain Omega_f: ||p_eta - p_ref||_L2(Omega_f)
+        Q_p = ph.function_space()
+        p_ref_proj = project(p_ref, Q_p)
+        vol_fluid = assemble(chi_f * dx)
+        mean_pref = assemble(chi_f * p_ref_proj * dx) / vol_fluid
+        mean_ph   = assemble(chi_f * ph * dx) / vol_fluid
+        err_p_vec = (ph - mean_ph) - (p_ref_proj - mean_pref)
+        err_p_sq  = assemble(chi_f * inner(err_p_vec, err_p_vec) * dx)
+        err_pressure = math.sqrt(err_p_sq)
+
         results.append({
             'eta': eta,
             'R': R_val,
             'err_solid': err_solid,
             'err_fluid': err_fluid,
+            'err_pressure': err_pressure,
             'mesh': p_mesh,
             'uh': uh,
             'ph': ph
@@ -146,26 +156,30 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
         if i == 0:
             results[i]['rate_solid'] = None
             results[i]['rate_fluid'] = None
+            results[i]['rate_pressure'] = None
         else:
             e_prev = results[i-1]['eta']
             e_curr = results[i]['eta']
             log_ratio = math.log10(e_curr / e_prev)
             rate_s = math.log10(results[i]['err_solid'] / results[i-1]['err_solid']) / log_ratio
             rate_f = math.log10(results[i]['err_fluid'] / results[i-1]['err_fluid']) / log_ratio
+            rate_p = math.log10(results[i]['err_pressure'] / results[i-1]['err_pressure']) / log_ratio
             results[i]['rate_solid'] = rate_s
             results[i]['rate_fluid'] = rate_f
+            results[i]['rate_pressure'] = rate_p
 
     # 5. Print Table 1 comparison
-    print("\n" + "="*85)
+    print("\n" + "="*118)
     print(" TABLE 1: Numerical measurement of error estimates at Re = 40 (Angot et al. 1999)")
-    print("="*85)
-    print(f"{'eta':<10} | {'||u_eta||_L2(s)':<16} | {'alpha (solid)':<14} | {'||u_eta-uref||_L2(f)':<20} | {'alpha (fluid)':<14}")
-    print("-" * 85)
+    print("="*118)
+    print(f"{'eta':<10} | {'||u_eta||_L2(s)':<16} | {'alpha (solid)':<14} | {'||u-uref||_L2(f)':<18} | {'alpha (fluid)':<14} | {'||p-pref||_L2(f)':<18} | {'alpha (p)':<10}")
+    print("-" * 118)
     for r in results:
         rate_s_str = f"{r['rate_solid']:.2f}" if r['rate_solid'] is not None else "---"
         rate_f_str = f"{r['rate_fluid']:.2f}" if r['rate_fluid'] is not None else "---"
-        print(f"{r['eta']:<10.1e} | {r['err_solid']:<16.3e} | {rate_s_str:<14} | {r['err_fluid']:<20.3e} | {rate_f_str:<14}")
-    print("="*85)
+        rate_p_str = f"{r['rate_pressure']:.2f}" if r['rate_pressure'] is not None else "---"
+        print(f"{r['eta']:<10.1e} | {r['err_solid']:<16.3e} | {rate_s_str:<14} | {r['err_fluid']:<18.3e} | {rate_f_str:<14} | {r['err_pressure']:<18.3e} | {rate_p_str:<10}")
+    print("="*118)
 
     # 6. Plot 1: Log-log Convergence Curves (Table 1)
     plot_l2_penalization_convergence(results, output_dir)
@@ -222,7 +236,7 @@ def compute_strouhal_number(time_array, signal_array, D=0.2, U_mean=1.0):
     return dominant_freq, strouhal
 
 
-def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_dir=None):
+def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, structured=True, output_dir=None):
     """
     Reproduces Section 6.1 (Unsteady case at Re = 80, Table 2 & Figs. 4-5):
     - Solves unsteady vortex shedding with Conforming_solver (reference).
@@ -237,7 +251,7 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
         output_dir = os.path.join(project_dir, "Plots", "Validation", "L2_unsteady_Re80")
     os.makedirs(output_dir, exist_ok=True)
 
-    Re = 200.0
+    Re = 40
     D = side_length
     U_mean = 1.0
     probe_pt = (1.5, 0.5)
@@ -252,7 +266,7 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
     ref_mesh, u_ref, p_ref = load_conforming_solution(obstacle_type="square", n=n, Re=Re, t_final=T_end)
     if ref_mesh is None:
         print("\n--- Running Unsteady Conforming Reference Solver ---")
-        conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=True)
+        conf_solver = Conforming_solver(moving=False, type_obstacle="square", n=n, Re=Re, structured=structured)
         ref_mesh, u_ref, p_ref = conf_solver.conforming_solve(
             obstacle=obs,
             dt=dt,
@@ -284,7 +298,7 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
         p_mesh, uh, ph = load_brinkman_solution(obstacle_type="square", n=n, R_val=R_val, Re=Re, t_final=T_end)
         if p_mesh is None:
             print(f"\n--- Running Unsteady Brinkman_solver with eta = {eta:.1e} (R = {R_val:.1e}) ---")
-            brink_solver = Brinkman_solver(moving=False, type_obstacle="square", n=n, R=R_val, Re=Re)
+            brink_solver = Brinkman_solver(moving=False, type_obstacle="square", n=n, R=R_val, Re=Re, structured=structured)
             p_mesh, uh, ph = brink_solver.Brinkman_solve(
                 obstacle=obs,
                 dt=dt,
@@ -372,7 +386,7 @@ if __name__ == "__main__":
     # PARAMETRI MODIFICABILI DIRETTAMENTE DA CODICE
     # =========================================================================
     # Modalità di test: "steady" (Re=40), "unsteady" (Re=80), o "all"
-    mode = "unsteady"
+    mode = "steady"
 
     # Risoluzione mesh (es. n=320 per benchmark finale, n=80 per test veloci)
     n = 320
@@ -392,14 +406,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="L2 Penalization Validation (Angot et al. 1999)")
     parser.add_argument("--mode", type=str, default=mode, choices=["steady", "unsteady", "all"],
                         help="Select test mode: 'steady' (Re=40), 'unsteady' (Re=80), or 'all'")
+    parser.add_argument("--unstructured", action="store_true", default=False,
+                        help="Use unstructured mesh instead of structured")
     args = parser.parse_args()
+
+    use_structured = not args.unstructured
 
     if args.mode in ["steady", "all"]:
         run_steady_experiment(
             eta_list=eta_list_steady,
             n=n,
             dt=dt,
-            T_end=T_end_steady
+            T_end=T_end_steady,
+            structured=use_structured
         )
 
     if args.mode in ["unsteady", "all"]:
@@ -407,6 +426,7 @@ if __name__ == "__main__":
             eta_list=eta_list_unsteady,
             n=n,
             T_end=T_end_unsteady,
-            dt=dt
+            dt=dt,
+            structured=use_structured
         )
 

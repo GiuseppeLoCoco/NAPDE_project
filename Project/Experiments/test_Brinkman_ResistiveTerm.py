@@ -35,6 +35,7 @@ from firedrake import (
 )
 
 from domain_settings.obstacles import BufferObstacle
+from domain_settings.mesh_settings import create_unstructured_fluid_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
 
@@ -46,7 +47,7 @@ from Solvers.NS_Brinkman import Brinkman_solver
 
 def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
                           Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                          T_end: float = 2.0, dt: float = 0.5) -> Tuple[object, object, object]:
+                          T_end: float = 2.0, dt: float = 0.5, structured: bool = False) -> Tuple[object, object, object]:
     """
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
     using the Brinkman_solver class.
@@ -57,11 +58,15 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
     ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    if structured:
+        mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    else:
+        mesh = create_unstructured_fluid_mesh(L_tot, Ly, n_tot)
+
     mesh.coordinates.dat.data[:, 0] -= L_buf
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re)
+    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re, structured=structured)
 
     mesh_out, uh, ph = solver.Brinkman_solve(
         mesh=mesh,
@@ -70,7 +75,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -127,7 +132,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 # =============================================================================
 
 def run_r_scaling_analysis(
-    resolutions: List[int] = [40,80,120],
+    resolutions: List[int] = [40,80,120,160],
     R_base: float = 1.0e4,
     Lx: float = 4.0,
     Ly: float = 1.0,
@@ -135,6 +140,7 @@ def run_r_scaling_analysis(
     Re: float = 40.0,
     T_end: float = 2.0,
     dt: float = 0.5,
+    structured: bool = False,
     output_dir: str = "results_strategy_B_R_scaling"
 ):
     os.makedirs(output_dir, exist_ok=True)
@@ -142,7 +148,7 @@ def run_r_scaling_analysis(
 
     print("=" * 90)
     print("STRATEGY B: SPATIAL CONVERGENCE WITH BALANCED PENALTY SCALING R(h) ~ h^-2")
-    print(f"Resolutions n: {resolutions} | Base Penalty R_0 = {R_base:.1e} at n_min = {resolutions[0]}")
+    print(f"Resolutions n: {resolutions} | Base Penalty R_0 = {R_base:.1e} at n_min = {resolutions[0]} | Structured = {structured}")
     print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] | Re = {Re}")
     print("=" * 90)
 
@@ -155,7 +161,7 @@ def run_r_scaling_analysis(
 
     for n, R_val in zip(resolutions, scaled_R_vals):
         print(f"\n---> Running n = {n:3d} (h = {Lx/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
-        uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt)
+        uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt, structured=structured)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
         y_pts, u_x_num, u_x_ex = extract_interface_profile(uh, mms)
@@ -187,7 +193,8 @@ def run_r_scaling_analysis(
         scaled_R_vals=scaled_R_vals,
         errs_L2_u=errs_L2_u,
         errs_H1_u=errs_H1_u,
-        errs_intf=errs_intf
+        errs_intf=errs_intf,
+        errs_L2_p=errs_L2_p
     )
 
     # -------------------------------------------------------------------------
@@ -223,7 +230,7 @@ def run_r_scaling_analysis(
 
 if __name__ == "__main__":
     run_r_scaling_analysis(
-        resolutions=[40,80,120],
+        resolutions=[40,80,120,160],
         R_base=1.0e3,
         Lx=4.0,
         Ly=1.0,
@@ -231,5 +238,6 @@ if __name__ == "__main__":
         Re=40.0,
         T_end=10.0,
         dt=0.5,
-        output_dir="results_buffer_recovery_v3"
+        structured=False,               # Unstructured mesh
+        output_dir="results_buffer_recovery"
     )

@@ -29,6 +29,7 @@ from firedrake import (
 )
 
 from domain_settings.obstacles import BufferObstacle
+from domain_settings.mesh_settings import create_unstructured_fluid_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_Conforming import Conforming_solver
@@ -40,15 +41,18 @@ from Solvers.NS_Conforming import Conforming_solver
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
-                            T_end: float = 5.0, dt: float = 0.5):
+                            T_end: float = 5.0, dt: float = 0.5, structured: bool = False):
     """
     Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
     with exact Dirichlet boundary conditions.
     """
-    ny = max(4, int(round(n * Ly / Lx)))
-    mesh = RectangleMesh(n, ny, Lx, Ly)
+    if structured:
+        ny = max(4, int(round(n * Ly / Lx)))
+        mesh = RectangleMesh(n, ny, Lx, Ly)
+    else:
+        mesh = create_unstructured_fluid_mesh(Lx, Ly, n)
 
-    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re)
+    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re, structured=structured)
     mesh_out, uh, ph = solver.conforming_solve(
         mesh=mesh,
         obstacle=None,
@@ -56,7 +60,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -69,7 +73,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
 
 def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
                                  L_buf: float = 1.0, R_penalty: float = 1.0e5,
-                                 T_end: float = 5.0, dt: float = 0.5):
+                                 T_end: float = 5.0, dt: float = 0.5, structured: bool = False):
     """
     Solves extended problem on [-L_buf, Lx] x [0, Ly] using Brinkman_solver with BufferObstacle.
     """
@@ -79,11 +83,15 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
     ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    if structured:
+        mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+    else:
+        mesh = create_unstructured_fluid_mesh(L_tot, Ly, n_tot)
+
     mesh.coordinates.dat.data[:, 0] -= L_buf
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = Brinkman_solver(moving=False, n=n, R=R_penalty, Re=mms.Re)
+    solver = Brinkman_solver(moving=False, n=n, R=R_penalty, Re=mms.Re, structured=structured)
 
     mesh_out, uh, ph = solver.Brinkman_solve(
         mesh=mesh,
@@ -92,7 +100,7 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -178,6 +186,7 @@ def run_experiment_pipeline(
     R_penalty: float = 1.0e4,
     T_end: float = 5.0,
     dt: float = 0.5,
+    structured: bool = False,
     output_dir: str = "buffer_experiment_results"
 ):
     os.makedirs(output_dir, exist_ok=True)
@@ -185,7 +194,7 @@ def run_experiment_pipeline(
 
     print("=" * 80)
     print("UPSTREAM BUFFER RECOVERY EXPERIMENT: CONFORMING vs BRINKMAN BUFFER")
-    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e}")
+    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e} | Structured: {structured}")
     print(f"Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
     print("=" * 80)
 
@@ -200,7 +209,7 @@ def run_experiment_pipeline(
         print(f"\n---> Running Resolution n = {n} (h = {Lx/n:.4f})")
         
         # 1. Phase 1: Conforming
-        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt)
+        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
         e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
         res_p1["L2_u"].append(e_L2_u1)
         res_p1["H1_u"].append(e_H1_u1)
@@ -208,7 +217,7 @@ def run_experiment_pipeline(
         print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.4e} | H1(u): {e_H1_u1:.4e} | L2(p): {e_L2_p1:.4e}")
 
         # 2. Phase 2: Buffer Brinkman
-        uh_2, ph_2, mesh_2 = solve_phase2_brinkman_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt)
+        uh_2, ph_2, mesh_2 = solve_phase2_brinkman_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt, structured=structured)
         e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms)
         
         # Interface profile
@@ -273,13 +282,14 @@ def run_experiment_pipeline(
 
 if __name__ == "__main__":
     run_experiment_pipeline(
-        resolutions=[40,80,120],       # Resolutions
+        resolutions=[40,80,120,160],       # Resolutions
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,                      # Length of the buffer region
         Re=40.0,
-        R_penalty=1.0e6,                # Brinkman penalty term
+        R_penalty=1.0e3,                # Brinkman penalty term
         T_end=10,                      # Final time
         dt=0.5,
+        structured=False,               # Unstructured mesh
         output_dir="results_Brinkman_buffer_recovery"
     )

@@ -31,13 +31,14 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None):  
+    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None, structured=False):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
         # Initialize the obstacle based on the type chosen
@@ -90,7 +91,7 @@ class NS_DLM_Solver:
 
         # Create the meshes
         if fluid_mesh is None:
-            fluid_mesh = create_fluid_mesh(Lx, Ly, self.n)
+            fluid_mesh = create_fluid_mesh(Lx, Ly, self.n, structured=self.structured)
         elif not hasattr(fluid_mesh, 'mesh'):
             class FluidMeshWrapper:
                 def __init__(self, m):
@@ -202,22 +203,22 @@ class NS_DLM_Solver:
         # Create boundary conditions dictionary and setup
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
         if u_ex_val is not None:
-            bcs = [
-                DirichletBC(FS['fluid'][0], u_ex_val, 1),
-                DirichletBC(FS['fluid'][0], u_ex_val, 3),
-                DirichletBC(FS['fluid'][0], u_ex_val, 4)
-            ]
             if g_ex_val is None:
-                bcs.append(DirichletBC(FS['fluid'][0], u_ex_val, 2))
+                bcs = [DirichletBC(FS['fluid'][0], u_ex_val, "on_boundary")]
                 if p_ex_val is not None:
-                    bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, 2))
-            bcs_correction = [
-                DirichletBC(V, u_ex_val, 1),
-                DirichletBC(V, u_ex_val, 3),
-                DirichletBC(V, u_ex_val, 4)
-            ]
-            if g_ex_val is None:
-                bcs_correction.append(DirichletBC(V, u_ex_val, 2))
+                    bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, "on_boundary"))
+                bcs_correction = [DirichletBC(V, u_ex_val, "on_boundary")]
+            else:
+                bcs = [
+                    DirichletBC(FS['fluid'][0], u_ex_val, 1),
+                    DirichletBC(FS['fluid'][0], u_ex_val, 3),
+                    DirichletBC(FS['fluid'][0], u_ex_val, 4)
+                ]
+                bcs_correction = [
+                    DirichletBC(V, u_ex_val, 1),
+                    DirichletBC(V, u_ex_val, 3),
+                    DirichletBC(V, u_ex_val, 4)
+                ]
         else:
             bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
             bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
@@ -386,9 +387,11 @@ if __name__ == "__main__":
     parser.add_argument('--obstacle', type=str, default='cylinder',
                         choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
+    parser.add_argument('--structured', action='store_true', default=False,
+                        help='Use structured Cartesian fluid mesh')
     
     args = parser.parse_args()
 
     # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
-    solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle, structured=args.structured)
     solver.NS_DLM_Solve()

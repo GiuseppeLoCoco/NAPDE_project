@@ -140,7 +140,7 @@ def run_convergence_analysis(
     t_conf = t_final_conforming if t_final_conforming is not None else t_final
 
     print("\n" + "=" * 75)
-    print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re})")
+    print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re}) | Structured = {structured}")
     print(f" Refinements n: {resolutions}")
     print(f" Conforming reference n: {refinement_conforming} (at t = {t_conf:.2f}s)")
     if dt is not None:
@@ -162,7 +162,7 @@ def run_convergence_analysis(
 
     if u_ex is None:
         print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s)...")
-        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
+        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re, structured=structured)
         conf_mesh, u_ex, p_ex = conf_solver.conforming_solve(dt=dt, t_final=t_conf)
     else:
         print(f">> Reusing loaded Conforming reference solution (n = {refinement_conforming}, t = {t_conf:.2f}s).")
@@ -195,7 +195,7 @@ def run_convergence_analysis(
             )
             if u_h is None:
                 print(f">> Running Brinkman solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
-                solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+                solver = Brinkman_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re, structured=structured)
                 mesh_h, u_h, p_h = solver.Brinkman_solve(dt=dt, t_final=t_final)
             else:
                 print(f">> Reusing loaded Brinkman solution (n = {n}, t = {t_final:.2f}s).")
@@ -209,7 +209,7 @@ def run_convergence_analysis(
             )
             if u_h is None:
                 print(f">> Running DLM solver for resolution n = {n} (t_final = {t_final:.2f}s)...")
-                solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re)
+                solver = NS_DLM_Solver(moving=False, type_obstacle=obstacle_type, n=n, Re=Re, structured=structured)
                 mesh_h, u_h, p_h = solver.NS_DLM_Solve(dt=dt, t_final=t_final)
             else:
                 print(f">> Using loaded DLM solution (n = {n}, t = {t_final:.2f}s).")
@@ -224,7 +224,7 @@ def run_convergence_analysis(
             )
             if u_h is None:
                 print(f">> Running RIIS solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
-                solver = RIIS_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+                solver = RIIS_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re, structured=structured)
                 mesh_h, u_h, p_h = solver.RIIS_solve(dt=dt, t_final=t_final)
             else:
                 print(f">> Using loaded RIIS solution (n = {n}, t = {t_final:.2f}s).")
@@ -265,23 +265,18 @@ def run_convergence_analysis(
         else:
             rates_L2_p.append(float('nan'))
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 98)
     print(f" CONVERGENCE RESULTS SUMMARY ({solver_type.upper()}, {obstacle_type.upper()}, Re={Re})")
-    print("=" * 70)
-    print(f"{'n':>6} | {'h':>10} | {'L2 Velocity Err':>16} | {'H1 Velocity Err':>16} | {'L2 Pressure Err':>16}")
-    print("-" * 70)
+    print("=" * 98)
+    print(f"{'n':>6} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
+    print("-" * 98)
     for i, n in enumerate(resolutions):
+        r_l2 = f"{rates_L2_u[i-1]:+5.2f}" if i > 0 else "   -- "
+        r_h1 = f"{rates_H1_u[i-1]:+5.2f}" if i > 0 else "   -- "
+        r_p  = f"{rates_L2_p[i-1]:+5.2f}" if (i > 0 and not math.isnan(rates_L2_p[i-1])) else "   -- "
         p_str = f"{err_L2_p[i]:14.5e}" if not math.isnan(err_L2_p[i]) else "           N/A"
-        print(f"{n:6d} | {dx_h[i]:10.5f} | {err_L2_u[i]:16.5e} | {err_H1_u[i]:16.5e} | {err_L2_p[i]:16.5e}")
-    print("-" * 70)
-
-    print("\nEmpirical Convergence Rates:")
-    for i in range(len(resolutions) - 1):
-        n1, n2 = resolutions[i], resolutions[i + 1]
-        print(f"  n = {n1} -> {n2}:  Rate L2(u) = {rates_L2_u[i]:+.3f} | "
-              f"Rate H1(u) = {rates_H1_u[i]:+.3f} | "
-              f"Rate L2(p) = {rates_L2_p[i]:+.3f}")
-    print("=" * 70 + "\n")
+        print(f"{n:6d} | {dx_h[i]:8.4f} | {err_L2_u[i]:14.5e} | {r_l2} | {err_H1_u[i]:14.5e} | {r_h1} | {p_str} | {r_p}")
+    print("=" * 98 + "\n")
 
     # -------------------------------------------------------------------------
     # STEP 4: LOG-LOG CONVERGENCE PLOT, VERTICAL PROFILE AND SUMMARY TABLES
@@ -340,5 +335,6 @@ if __name__ == "__main__":
         R_penalty=R_penalty,
         dt=dt,
         t_final=t_final,
-        t_final_conforming=t_final_conforming
+        t_final_conforming=t_final_conforming,
+        structured=False
     )

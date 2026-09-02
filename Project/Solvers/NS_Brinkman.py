@@ -11,21 +11,22 @@ from math import cos, pi as PI
 
 from user_inputs import *
 import user_inputs.user_parameters as user_parameters
-from domain_settings import create_bcs_penalty, time_varying_bc
+from domain_settings import create_bcs_penalty, time_varying_bc, create_fluid_mesh
 from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 from Solvers.Stokes_solver import solve_stokes_initial
 
 class Brinkman_solver:
 
-    def __init__(self, moving=False, type_obstacle="square", n=None, R=None, Re=None):
+    def __init__(self, moving=False, type_obstacle="square", n=None, R=None, Re=None, structured=False):
 
         self.moving = moving
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
-        self.R = R if R is not None else getattr(user_parameters, 'R', 1000.0)
+        self.R = R if R is not None else getattr(user_parameters, 'R', 10000.0)
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
     def Brinkman_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
@@ -63,7 +64,10 @@ class Brinkman_solver:
                     self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, thickness=line_thickness)
 
         if mesh is None:
-            mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+            if self.structured:
+                mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+            else:
+                mesh = create_fluid_mesh(Lx, Ly, self.n, structured=False).mesh
 
         # ==================================
         # DATA AND SOLVER
@@ -109,15 +113,16 @@ class Brinkman_solver:
 
         # Define boundary conditions
         if u_ex_val is not None:
-            bcs = [
-                DirichletBC(W.sub(0), u_ex_val, 1),
-                DirichletBC(W.sub(0), u_ex_val, 3),
-                DirichletBC(W.sub(0), u_ex_val, 4)
-            ]
             if g_ex_val is None:
-                bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
+                bcs = [DirichletBC(W.sub(0), u_ex_val, "on_boundary")]
                 if p_ex_val is not None:
-                    bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
+                    bcs.append(DirichletBC(W.sub(1), p_ex_val, "on_boundary"))
+            else:
+                bcs = [
+                    DirichletBC(W.sub(0), u_ex_val, 1),
+                    DirichletBC(W.sub(0), u_ex_val, 3),
+                    DirichletBC(W.sub(0), u_ex_val, 4)
+                ]
         else:
             bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
 
@@ -243,10 +248,12 @@ if __name__ == '__main__':
     parser.add_argument('--obstacle', type=str, default='cylinder',
                         choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
+    parser.add_argument('--structured', action='store_true', default=False,
+                        help='Use structured Cartesian fluid mesh')
     args = parser.parse_args()
 
     # Istanziamo la classe e chiamiamo il solver
-    solver = Brinkman_solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver = Brinkman_solver(moving=args.moving, type_obstacle=args.obstacle, structured=args.structured)
     solver.Brinkman_solve()
 
 

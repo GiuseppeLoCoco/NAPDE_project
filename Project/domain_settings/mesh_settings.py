@@ -55,7 +55,7 @@ def structured_conforming_square_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
 
     # Fluid physical surface (all 8 blocks)
     surfaces = [tag for dim, tag in out_dim_tags if dim == 2]
-    model.addPhysicalGroup(2, surfaces, name="Fluid")
+    model.addPhysicalGroup(2, surfaces, 1)
 
     # Set transfinite curves with exact cell count matching spacing h
     curves = model.getEntities(1)
@@ -77,8 +77,9 @@ def structured_conforming_square_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
     obstacle_lines = []
 
     for dim, line_tag in model.getEntities(1):
-        com = model.occ.getCenterOfMass(dim, line_tag)
-        xc_l, yc_l = com[0], com[1]
+        bbox = model.occ.getBoundingBox(dim, line_tag)
+        xc_l = 0.5 * (bbox[0] + bbox[3])
+        yc_l = 0.5 * (bbox[1] + bbox[4])
 
         if np.isclose(xc_l, 0.0, atol=tol):
             inflow_lines.append(line_tag)
@@ -91,11 +92,11 @@ def structured_conforming_square_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0):
         elif (x1 - tol <= xc_l <= x2 + tol) and (y1 - tol <= yc_l <= y2 + tol):
             obstacle_lines.append(line_tag)
 
-    if inflow_lines: model.addPhysicalGroup(1, inflow_lines, 1, name="Inflow")
-    if outflow_lines: model.addPhysicalGroup(1, outflow_lines, 2, name="Outflow")
-    if bottom_lines: model.addPhysicalGroup(1, bottom_lines, 3, name="Bottom")
-    if top_lines: model.addPhysicalGroup(1, top_lines, 4, name="Top")
-    if obstacle_lines: model.addPhysicalGroup(1, obstacle_lines, 5, name="Obstacle")
+    if inflow_lines: model.addPhysicalGroup(1, inflow_lines, 1)
+    if outflow_lines: model.addPhysicalGroup(1, outflow_lines, 2)
+    if bottom_lines: model.addPhysicalGroup(1, bottom_lines, 3)
+    if top_lines: model.addPhysicalGroup(1, top_lines, 4)
+    if obstacle_lines: model.addPhysicalGroup(1, obstacle_lines, 5)
 
     model.mesh.generate(2)
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -121,6 +122,8 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0, structured=False):
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.SaveElementTagType", 1)
     
     model = gmsh.model
     model.add(f"FluidDomain_t_{t_val:.4f}")
@@ -163,8 +166,8 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0, structured=False):
     fluid_shape, _ = model.occ.cut([(2, channel)], [(2, obstacle)])
     model.occ.synchronize()
 
-    # TAGGING of the PHYSICAL GROUPS
-    model.addPhysicalGroup(2, [fluid_shape[0][1]], name="Fluid")
+    # TAGGING of the PHYSICAL GROUPS (integer IDs for Firedrake)
+    model.addPhysicalGroup(2, [fluid_shape[0][1]], 1)
 
     inflow_lines, outflow_lines = [], []
     bottom_lines, top_lines = [], []
@@ -172,8 +175,9 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0, structured=False):
 
     tol = 1e-6
     for dim, line_tag in model.getEntities(1):
-        com = model.occ.getCenterOfMass(dim, line_tag)
-        x_c, y_c = com[0], com[1]
+        bbox = model.occ.getBoundingBox(dim, line_tag)
+        x_c = 0.5 * (bbox[0] + bbox[3])
+        y_c = 0.5 * (bbox[1] + bbox[4])
 
         if np.isclose(x_c, 0.0, atol=tol):
             inflow_lines.append(line_tag)
@@ -187,11 +191,11 @@ def conforming_mesh(Lx, Ly, obstacle_obj, n, t_val=0.0, structured=False):
             obstacle_lines.append(line_tag)
 
     # Boundary IDs
-    if inflow_lines: model.addPhysicalGroup(1, inflow_lines, 1, name="Inflow")
-    if outflow_lines: model.addPhysicalGroup(1, outflow_lines, 2, name="Outflow")
-    if bottom_lines: model.addPhysicalGroup(1, bottom_lines, 3, name="Bottom")
-    if top_lines: model.addPhysicalGroup(1, top_lines, 4, name="Top")
-    if obstacle_lines: model.addPhysicalGroup(1, obstacle_lines, 5, name="Obstacle")
+    if inflow_lines: model.addPhysicalGroup(1, inflow_lines, 1, name="1")
+    if outflow_lines: model.addPhysicalGroup(1, outflow_lines, 2, name="2")
+    if bottom_lines: model.addPhysicalGroup(1, bottom_lines, 3, name="3")
+    if top_lines: model.addPhysicalGroup(1, top_lines, 4, name="4")
+    if obstacle_lines: model.addPhysicalGroup(1, obstacle_lines, 5, name="5")
 
     model.mesh.setSize(model.getEntities(0), res_domain)
     
@@ -270,10 +274,68 @@ def create_solid_mesh(obstacle_obj, n):
             os.remove(tmp_solid_msh)
 		
 
+def create_unstructured_fluid_mesh(Lx, Ly, n):
+    """
+    Creates an unstructured triangular 2D mesh for the rectangle [0, Lx] x [0, Ly] using Gmsh.
+    Boundary tags:
+      1: Inflow (x = 0)
+      2: Outflow (x = Lx)
+      3: Bottom (y = 0)
+      4: Top (y = Ly)
+    """
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.SaveElementTagType", 1)
+
+    model = gmsh.model
+    model.add(f"UnstructuredFluidDomain_{os.getpid()}")
+
+    h = float(Ly) / float(n)
+
+    p1 = model.geo.addPoint(0.0, 0.0, 0.0, h)
+    p2 = model.geo.addPoint(Lx,  0.0, 0.0, h)
+    p3 = model.geo.addPoint(Lx,  Ly,  0.0, h)
+    p4 = model.geo.addPoint(0.0, Ly,  0.0, h)
+
+    l_bottom  = model.geo.addLine(p1, p2)
+    l_outflow = model.geo.addLine(p2, p3)
+    l_top     = model.geo.addLine(p3, p4)
+    l_inflow  = model.geo.addLine(p4, p1)
+
+    loop = model.geo.addCurveLoop([l_bottom, l_outflow, l_top, l_inflow])
+    surf = model.geo.addPlaneSurface([loop])
+
+    model.geo.addPhysicalGroup(1, [l_inflow],  1)
+    model.geo.addPhysicalGroup(1, [l_outflow], 2)
+    model.geo.addPhysicalGroup(1, [l_bottom],  3)
+    model.geo.addPhysicalGroup(1, [l_top],     4)
+    model.geo.addPhysicalGroup(2, [surf],      10)
+
+    model.geo.synchronize()
+
+    model.mesh.generate(2)
+
+    tmp_msh_file = f"tmp_unstructured_fluid_{os.getpid()}_{np.random.randint(1000000)}.msh"
+    gmsh.write(tmp_msh_file)
+    gmsh.finalize()
+
+    m = Mesh(tmp_msh_file)
+    if os.path.exists(tmp_msh_file):
+        os.remove(tmp_msh_file)
+
+    return m
+
+
 class create_fluid_mesh:
-    def __init__(self, Lx, Ly, n):
+    def __init__(self, Lx, Ly, n, structured=False):
         self.Lx = Lx
         self.Ly = Ly
-        nnn = n
-        ny = int(nnn * (self.Ly / self.Lx))
-        self.mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
+        self.n = n
+        self.structured = structured
+        if structured:
+            ny = max(4, int(round(n * (self.Ly / self.Lx))))
+            self.mesh = RectangleMesh(n, ny, self.Lx, self.Ly)
+        else:
+            self.mesh = create_unstructured_fluid_mesh(Lx, Ly, n)
+

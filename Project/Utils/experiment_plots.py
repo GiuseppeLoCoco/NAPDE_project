@@ -39,33 +39,53 @@ def print_phase_comparison_tables(
     method_name: str
 ):
     """
-    Prints formatted convergence tables comparing Phase 1 (Conforming) and Phase 2 (Buffer recovery).
+    Prints formatted convergence tables comparing Phase 1 (Conforming) and Phase 2 (Buffer recovery),
+    including L2(u), H1(u), and L2(p) convergence rates.
     """
     rates_p1_L2 = compute_convergence_rates(res_p1["L2_u"], h_vals)
     rates_p1_H1 = compute_convergence_rates(res_p1["H1_u"], h_vals)
+    rates_p1_p  = compute_convergence_rates(res_p1["L2_p"], h_vals) if "L2_p" in res_p1 else []
+
     rates_p2_L2 = compute_convergence_rates(res_p2["L2_u"], h_vals)
     rates_p2_H1 = compute_convergence_rates(res_p2["H1_u"], h_vals)
+    rates_p2_p  = compute_convergence_rates(res_p2["L2_p"], h_vals) if "L2_p" in res_p2 else []
 
-    print("\n" + "=" * 85)
+    print("\n" + "=" * 98)
     print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
-    print("=" * 85)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14}")
-    print("-" * 85)
+    print("=" * 98)
+    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
+    print("-" * 98)
     for i, n in enumerate(resolutions):
         r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if i > 0 else "   -- "
         r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if i > 0 else "   -- "
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e}")
+        r_p  = f"{rates_p1_p[i-1]:+5.2f}" if (i > 0 and len(rates_p1_p) > 0) else "   -- "
+        p_val_str = f"{res_p1['L2_p'][i]:14.5e}" if "L2_p" in res_p1 else "           N/A"
+        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {p_val_str} | {r_p}")
 
-    print("\n" + "=" * 95)
-    print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
-    print("=" * 95)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'Interface L2':>14}")
-    print("-" * 95)
-    for i, n in enumerate(resolutions):
-        r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if i > 0 else "   -- "
-        r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if i > 0 else "   -- "
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {res_p2['interf_L2'][i]:14.5e}")
-    print("=" * 95 + "\n")
+    has_p2_p = "L2_p" in res_p2 and len(res_p2["L2_p"]) == len(resolutions)
+    if has_p2_p:
+        print("\n" + "=" * 118)
+        print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
+        print("=" * 118)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6} | {'Interface L2':>14}")
+        print("-" * 118)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if i > 0 else "   -- "
+            r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if i > 0 else "   -- "
+            r_p  = f"{rates_p2_p[i-1]:+5.2f}" if (i > 0 and len(rates_p2_p) > 0) else "   -- "
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {res_p2['L2_p'][i]:14.5e} | {r_p} | {res_p2['interf_L2'][i]:14.5e}")
+        print("=" * 118 + "\n")
+    else:
+        print("\n" + "=" * 98)
+        print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
+        print("=" * 98)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'Interface L2':>14}")
+        print("-" * 98)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if i > 0 else "   -- "
+            r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if i > 0 else "   -- "
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {res_p2['interf_L2'][i]:14.5e}")
+        print("=" * 98 + "\n")
 
 
 def print_spatial_convergence_table(
@@ -74,27 +94,44 @@ def print_spatial_convergence_table(
     errs_L2_u: List[float],
     errs_H1_u: List[float],
     errs_intf: List[float],
-    method_name: str
+    method_name: str,
+    errs_L2_p: List[float] = None
 ):
     """
-    Prints a single method convergence summary table with rates for L2, H1 and Interface trace.
+    Prints a single method convergence summary table with rates for L2(u), H1(u), L2(p), and Interface trace.
     """
     rates_L2 = compute_convergence_rates(errs_L2_u, h_vals)
     rates_H1 = compute_convergence_rates(errs_H1_u, h_vals)
     rates_intf = compute_convergence_rates(errs_intf, h_vals)
+    rates_p = compute_convergence_rates(errs_L2_p, h_vals) if errs_L2_p is not None else None
 
-    print("\n" + "=" * 105)
-    print(f"CONVERGENCE SUMMARY TABLE: {method_name.upper()} BUFFER RECOVERY")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14} | {'Rate':>6}")
-    print("-" * 105)
+    if rates_p is not None:
+        print("\n" + "=" * 128)
+        print(f"CONVERGENCE SUMMARY TABLE: {method_name.upper()} BUFFER RECOVERY")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'L2(p) Err':>12} | {'Rate':>6} | {'Interface L2':>14} | {'Rate':>6}")
+        print("-" * 128)
 
-    for i, n in enumerate(resolutions):
-        r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
-        r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
-        r_intf_str = f"{rates_intf[i-1]:+6.2f}" if i > 0 else "    --"
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
-    print("=" * 105 + "\n")
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            r_p_str = f"{rates_p[i-1]:+6.2f}" if i > 0 else "    --"
+            r_intf_str = f"{rates_intf[i-1]:+6.2f}" if i > 0 else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_L2_p[i]:12.5e} | {r_p_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
+        print("=" * 128 + "\n")
+    else:
+        print("\n" + "=" * 105)
+        print(f"CONVERGENCE SUMMARY TABLE: {method_name.upper()} BUFFER RECOVERY")
+        print("=" * 105)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14} | {'Rate':>6}")
+        print("-" * 105)
+
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            r_intf_str = f"{rates_intf[i-1]:+6.2f}" if i > 0 else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
+        print("=" * 105 + "\n")
 
 
 def print_strategy_a_table(
@@ -126,24 +163,40 @@ def print_strategy_b_table(
     scaled_R_vals: List[float],
     errs_L2_u: List[float],
     errs_H1_u: List[float],
-    errs_intf: List[float]
+    errs_intf: List[float],
+    errs_L2_p: List[float] = None
 ):
     """
-    Prints Strategy B summary table: Spatial convergence with balanced penalty scaling R(h).
+    Prints Strategy B summary table: Spatial convergence with balanced penalty scaling R(h),
+    including L2(u), H1(u), and L2(p) convergence rates.
     """
     rates_L2 = compute_convergence_rates(errs_L2_u, h_vals)
     rates_H1 = compute_convergence_rates(errs_H1_u, h_vals)
+    rates_p  = compute_convergence_rates(errs_L2_p, h_vals) if errs_L2_p is not None else None
 
-    print("\n" + "=" * 105)
-    print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'Scaled R':>12} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14}")
-    print("-" * 105)
-    for i, n in enumerate(resolutions):
-        r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
-        r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {scaled_R_vals[i]:12.2e} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e}")
-    print("=" * 105 + "\n")
+    if rates_p is not None:
+        print("\n" + "=" * 128)
+        print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'Scaled R':>12} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'L2(p) Err':>12} | {'Rate':>6} | {'Interface L2':>14}")
+        print("-" * 128)
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            r_p_str  = f"{rates_p[i-1]:+6.2f}" if i > 0 else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {scaled_R_vals[i]:12.2e} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_L2_p[i]:12.5e} | {r_p_str} | {errs_intf[i]:14.5e}")
+        print("=" * 128 + "\n")
+    else:
+        print("\n" + "=" * 105)
+        print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
+        print("=" * 105)
+        print(f"{'n':>5} | {'h':>8} | {'Scaled R':>12} | {'L2(u) Err (Omega_0)':>20} | {'Rate':>6} | {'H1(u) Err':>12} | {'Rate':>6} | {'Interface L2':>14}")
+        print("-" * 105)
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {scaled_R_vals[i]:12.2e} | {errs_L2_u[i]:20.5e} | {r_l2_str} | {errs_H1_u[i]:12.5e} | {r_h1_str} | {errs_intf[i]:14.5e}")
+        print("=" * 105 + "\n")
 
 
 # =============================================================================

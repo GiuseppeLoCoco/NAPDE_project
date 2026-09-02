@@ -14,7 +14,7 @@ from math import cos, pi as PI, sin # Keep for local math.cos, math.sin usage
 
 from domain_settings.boundary_conditions import create_bcs_conforming, time_varying_bc, t_param
 from domain_settings.obstacles import circleObstacle, squareObstacle, rotatingLineObstacle, lineObstacle
-from domain_settings.mesh_settings import conforming_mesh
+from domain_settings.mesh_settings import conforming_mesh, create_fluid_mesh
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 from Solvers.Stokes_solver import solve_stokes_initial
 
@@ -57,7 +57,10 @@ class Conforming_solver:
             if self.obstacle is not None:
                 mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n, structured=self.structured)
             else:
-                mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+                if self.structured:
+                    mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+                else:
+                    mesh = create_fluid_mesh(Lx, Ly, self.n, structured=False).mesh
         
         tol = 1e-10
         T_end = float(t_final) if t_final is not None else 5.0
@@ -120,17 +123,18 @@ class Conforming_solver:
 
         # Create boundary conditions using the dedicated function (t_param is updated via time_varying_bc)
         if u_ex_val is not None:
-            bcs = [
-                DirichletBC(W.sub(0), u_ex_val, 1),
-                DirichletBC(W.sub(0), u_ex_val, 3),
-                DirichletBC(W.sub(0), u_ex_val, 4)
-            ]
+            if g_ex_val is None:
+                bcs = [DirichletBC(W.sub(0), u_ex_val, "on_boundary")]
+                if p_ex_val is not None:
+                    bcs.append(DirichletBC(W.sub(1), p_ex_val, "on_boundary"))
+            else:
+                bcs = [
+                    DirichletBC(W.sub(0), u_ex_val, 1),
+                    DirichletBC(W.sub(0), u_ex_val, 3),
+                    DirichletBC(W.sub(0), u_ex_val, 4)
+                ]
             if self.obstacle is not None:
                 bcs.append(DirichletBC(W.sub(0), u_ex_val, 5))
-            if g_ex_val is None:
-                bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
-                if p_ex_val is not None:
-                    bcs.append(DirichletBC(W.sub(1), p_ex_val, 2))
         else:
             bcs = create_bcs_conforming(W, mesh, w, type_obstacle=self.type_obstacle)
 
@@ -259,7 +263,9 @@ if __name__ == '__main__':
     parser.add_argument('--obstacle', type=str, default='cylinder',
                         choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
+    parser.add_argument('--structured', action='store_true', default=False,
+                        help='Use structured mesh')
     args = parser.parse_args()
     
-    solver = Conforming_solver(moving=args.moving, type_obstacle=args.obstacle)
+    solver = Conforming_solver(moving=args.moving, type_obstacle=args.obstacle, structured=args.structured)
     solver.conforming_solve()
