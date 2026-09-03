@@ -70,7 +70,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
