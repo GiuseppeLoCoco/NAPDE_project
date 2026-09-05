@@ -26,54 +26,61 @@ def get_inflow_profile(mesh, type_obstacle):
 def time_varying_bc(tt):
     t_param.assign(tt)
 
-def create_boundary_conditions(fluid_mesh, type_obstacle: str, **V):
-    inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle = type_obstacle)
-    # Target velocity sub-space (V['fluid'][0]) and pressure sub-space (V['fluid'][1])
-    bcu_inflow = DirichletBC(V['fluid'][0], inflow_profile, 1)
-    bcu_walls = DirichletBC(V['fluid'][0], Constant((0.0, 0.0)), (3, 4))
-    bcp_outflow = DirichletBC(V['fluid'][1], Constant(0.0), 2) # Null pressure at the outflow
+def create_boundary_conditions(fluid_mesh, type_obstacle: str, structured: bool = False, **V):
+    inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle=type_obstacle)
+    inflow_id = 3 if structured else 1
+    outflow_id = 4 if structured else 2
+    walls_ids = (1, 2) if structured else (3, 4)
+
+    bcu_inflow = DirichletBC(V['fluid'][0], inflow_profile, inflow_id)
+    bcu_walls = DirichletBC(V['fluid'][0], Constant((0.0, 0.0)), walls_ids)
+    bcp_outflow = DirichletBC(V['fluid'][1], Constant(0.0), outflow_id)
 
     bcs = [bcu_inflow, bcu_walls, bcp_outflow]
     return bcs
 
-def create_boundary_conditions_correction(fluid_mesh, V, type_obstacle: str):
-    inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle = type_obstacle)
-    # Target velocity sub-space (V['fluid'][0]) and pressure sub-space (V['fluid'][1])
-    bcu_inflow = DirichletBC(V, inflow_profile, 1)
-    bcu_walls = DirichletBC(V, Constant((0.0, 0.0)), (3, 4))
+def create_boundary_conditions_correction(fluid_mesh, V, type_obstacle: str, structured: bool = False):
+    inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle=type_obstacle)
+    inflow_id = 3 if structured else 1
+    walls_ids = (1, 2) if structured else (3, 4)
+
+    bcu_inflow = DirichletBC(V, inflow_profile, inflow_id)
+    bcu_walls = DirichletBC(V, Constant((0.0, 0.0)), walls_ids)
 
     bcs = [bcu_inflow, bcu_walls]
     return bcs
 
-def create_bcs_penalty(W, mesh, type_obstacle: str):
+def create_bcs_penalty(W, mesh, type_obstacle: str, structured: bool = True):
     """
-    Crea le condizioni al contorno per i solutori Brinkman e RIIS
-    che utilizzano una RectangleMesh standard.
-    IDs: 1 (inflow), 2 (outflow), 3 (bottom wall), 4 (top wall).
+    Crea le condizioni al contorno per i solutori Brinkman e RIIS.
+    Structured RectangleMesh: 3 (inflow), 4 (outflow), (1, 2) (bottom/top walls).
+    Gmsh mesh: 1 (inflow), 2 (outflow), (3, 4) (bottom/top walls).
     """
-    inflow_profile = get_inflow_profile(mesh, type_obstacle = type_obstacle)
+    inflow_profile = get_inflow_profile(mesh, type_obstacle=type_obstacle)
 
-    inflow_id = 1
-    outflow_id = 2
-    walls_ids = (3, 4)
+    inflow_id = 3 if structured else 1
+    outflow_id = 4 if structured else 2
+    walls_ids = (1, 2) if structured else (3, 4)
 
     bcu_inflow = DirichletBC(W.sub(0), inflow_profile, inflow_id)
     bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
-    bcp_outflow = DirichletBC(W.sub(1), Constant(0.0), outflow_id) # Null pressure at the outflow
+    bcp_outflow = DirichletBC(W.sub(1), Constant(0.0), outflow_id)
     
     return [bcu_inflow, bcu_walls, bcp_outflow]
 
-def create_bcs_conforming(W, mesh, w_obstacle_velocity, type_obstacle: str): # t_constant is now handled by t_param global
+def create_bcs_conforming(W, mesh, w_obstacle_velocity, type_obstacle: str, structured: bool = False):
     """
     Crea le condizioni al contorno per il solutore Conforming.
-    IDs: 1 (inflow), 3 (bottom wall), 4 (top wall), 5 (obstacle).
-    Non impone condizioni di Dirichlet sulla pressione all'outflow.
     """
-    # Usa la funzione condivisa per il profilo di inflow
-    inflow_profile = get_inflow_profile(mesh, type_obstacle = type_obstacle)
+    inflow_profile = get_inflow_profile(mesh, type_obstacle=type_obstacle)
+    inflow_id = 3 if structured else 1
+    walls_ids = (1, 2) if structured else (3, 4)
 
-    # Define boundaries (IDs are consistent with mesh_settings.py)
-    return [DirichletBC(W.sub(0), inflow_profile, 1), # Inflow
-            DirichletBC(W.sub(0), Constant((0, 0)), 3), # Bottom wall
-            DirichletBC(W.sub(0), Constant((0, 0)), 4), # Top wall
-            DirichletBC(W.sub(0), w_obstacle_velocity, 5)] # Obstacle
+    bcs = [
+        DirichletBC(W.sub(0), inflow_profile, inflow_id),
+        DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[0]),
+        DirichletBC(W.sub(0), Constant((0, 0)), walls_ids[1])
+    ]
+    if w_obstacle_velocity is not None:
+        bcs.append(DirichletBC(W.sub(0), w_obstacle_velocity, 5))
+    return bcs

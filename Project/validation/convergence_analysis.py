@@ -122,7 +122,8 @@ def run_convergence_analysis(
     R_penalty: float = 1000.0,
     dt: Optional[float] = None,
     t_final: float = 20.0,
-    t_final_conforming: Optional[float] = None
+    t_final_conforming: Optional[float] = None,
+    structured: bool = False
 ):
     """
     Executes simulations for each resolution n, loads saved results,
@@ -157,7 +158,8 @@ def run_convergence_analysis(
         obstacle_type=obstacle_type,
         n=refinement_conforming,
         Re=Re,
-        t_final=t_conf
+        t_final=t_conf,
+        structured=structured
     )
 
     if u_ex is None:
@@ -191,7 +193,8 @@ def run_convergence_analysis(
                 n=n,
                 R_val=R_penalty,
                 Re=Re,
-                t_final=t_final
+                t_final=t_final,
+                structured=structured
             )
             if u_h is None:
                 print(f">> Running Brinkman solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
@@ -205,7 +208,8 @@ def run_convergence_analysis(
                 obstacle_type=obstacle_type,
                 n=n,
                 Re=Re,
-                t_final=t_final
+                t_final=t_final,
+                structured=structured
             )
             if u_h is None:
                 print(f">> Running DLM solver for resolution n = {n} (t_final = {t_final:.2f}s)...")
@@ -220,7 +224,8 @@ def run_convergence_analysis(
                 n=n,
                 R_val=R_penalty,
                 Re=Re,
-                t_final=t_final
+                t_final=t_final,
+                structured=structured
             )
             if u_h is None:
                 print(f">> Running RIIS solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
@@ -266,7 +271,7 @@ def run_convergence_analysis(
             rates_L2_p.append(float('nan'))
 
     print("\n" + "=" * 98)
-    print(f" CONVERGENCE RESULTS SUMMARY ({solver_type.upper()}, {obstacle_type.upper()}, Re={Re})")
+    print(f" CONVERGENCE RESULTS SUMMARY ({solver_type.upper()}, {obstacle_type.upper()}, Re={Re}) | Structured = {structured}")
     print("=" * 98)
     print(f"{'n':>6} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
     print("-" * 98)
@@ -282,7 +287,8 @@ def run_convergence_analysis(
     # STEP 4: LOG-LOG CONVERGENCE PLOT, VERTICAL PROFILE AND SUMMARY TABLES
     # -------------------------------------------------------------------------
     case_name = "Brinkman" if solver_type.lower() == "brinkman" else ("RIIS" if solver_type.lower() == "riis" else "DLM")
-    out_dir = os.path.join(project_dir, "Plots", case_name)
+    mesh_type = "structured" if structured else "unstructured"
+    out_dir = os.path.join(project_dir, "Plots", "Convergence_Analysis", case_name, mesh_type)
     os.makedirs(out_dir, exist_ok=True)
     plot_filename = os.path.join(out_dir, f"convergence_loglog_{case_name}_{obstacle_type}_Re{Re}.png")
 
@@ -315,7 +321,7 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [40, 80, 120, 160,240]        # Mesh refinement levels n to simulate
+    resolutions = [40, 80, 120, 160, 240]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                # "square" or "cylinder" (both stationary/fixed)
     solver_type = "RIIS"                    # "Brinkman", "dlm", or "RIIS"
     Re = 40.0                               # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
@@ -324,6 +330,7 @@ if __name__ == "__main__":
     dt = 0.5                                # Time step size dt (can be None to use solver default)
     t_final = 40.0                          # Final simulation time step t_final for DLM / Brinkman / RIIS
     t_final_conforming = 40.0               # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
+    structured = False                      # True for structured mesh, False for unstructured mesh
     # =========================================================================
 
     run_convergence_analysis(
@@ -336,5 +343,5 @@ if __name__ == "__main__":
         dt=dt,
         t_final=t_final,
         t_final_conforming=t_final_conforming,
-        structured=False
+        structured=structured
     )

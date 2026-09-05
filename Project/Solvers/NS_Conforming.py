@@ -121,6 +121,11 @@ class Conforming_solver:
         else:
             w = Constant((0.0, 0.0))
 
+        # Boundary tag mapping (both RectangleMesh and Gmsh):
+        # 1 = Left (Inflow), 2 = Right (Outflow), 3 = Bottom, 4 = Top
+        dirichlet_tags = (1, 3, 4)
+        outflow_tag = 2
+
         # Create boundary conditions using the dedicated function (t_param is updated via time_varying_bc)
         if u_ex_val is not None:
             if g_ex_val is None:
@@ -128,11 +133,7 @@ class Conforming_solver:
                 if p_ex_val is not None:
                     bcs.append(DirichletBC(W.sub(1), p_ex_val, "on_boundary"))
             else:
-                bcs = [
-                    DirichletBC(W.sub(0), u_ex_val, 1),
-                    DirichletBC(W.sub(0), u_ex_val, 3),
-                    DirichletBC(W.sub(0), u_ex_val, 4)
-                ]
+                bcs = [DirichletBC(W.sub(0), u_ex_val, tag) for tag in dirichlet_tags]
             if self.obstacle is not None:
                 bcs.append(DirichletBC(W.sub(0), u_ex_val, 5))
         else:
@@ -148,7 +149,7 @@ class Conforming_solver:
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=mesh)
-            L += inner(g_ex_val, v)*ds_b(2)
+            L += inner(g_ex_val, v)*ds_b(outflow_tag)
 
         # ------- Setup output folders -------
         params = {
@@ -158,6 +159,7 @@ class Conforming_solver:
             'n': self.n,
             'Re': Re,
             'is_mms': (u_exact is not None),
+            'structured': getattr(self, 'structured', True)
         }
         basedir, file_dict = create_output_folders('Conforming', params)
 

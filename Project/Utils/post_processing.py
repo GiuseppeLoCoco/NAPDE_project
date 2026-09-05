@@ -102,33 +102,46 @@ def create_output_folders(solver_name, params, extra_fields=None):
     
     # Costruisce un percorso robusto partendo dalla directory del progetto (Project/)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if params.get('is_mms'):
-        base_plot_dir = os.path.join(project_root, 'Plots', 'MMS', solver_name)
-    else:
-        base_plot_dir = os.path.join(project_root, 'Plots', solver_name)
-    path_parts = [base_plot_dir]
+    
+    obs_raw = params.get('obstacle')
+    obs_str = str(obs_raw).lower() if obs_raw is not None else "none"
+    is_buffer = obs_str in ["buffer", "none"] and (obs_str == "buffer" or params.get('is_mms'))
 
-    if params.get('moving'):
-        path_parts.append('moving')
-    else:
-        path_parts.append('fixed')
-
-    if params.get('obstacle'):
-        path_parts.append(str(params.get('obstacle')))
-
-    if params.get('symmetric') is False:
-        path_parts.append('asymmetric')
-    else:
-        path_parts.append('symmetric')
+    mesh_type = "structured" if params.get('structured', True) else "unstructured"
 
     param_string = f"n{params.get('n', 'N')}"
     if 'R' in params:
         param_string += f"_R{params.get('R')}"
-
     if 'Re' in params:
         param_string += f"_Re{params.get('Re')}"
 
-    basedir = os.path.join(base_plot_dir, *path_parts[1:], param_string)
+    if is_buffer:
+        # Percorso per esperimenti Buffer: Plots/Buffer/{solver_name}/{structured|unstructured}/n{n}_...
+        basedir = os.path.join(project_root, 'Plots', 'Buffer', solver_name, mesh_type, param_string)
+    else:
+        # Percorso standard (ostacoli): Plots/{solver_name}/{structured|unstructured}/fixed/{obstacle}/{sym_str}/n{n}_...
+        if params.get('is_mms'):
+            base_plot_dir = os.path.join(project_root, 'Plots', 'MMS', solver_name, mesh_type)
+        else:
+            base_plot_dir = os.path.join(project_root, 'Plots', solver_name, mesh_type)
+
+        path_parts = [base_plot_dir]
+
+        if params.get('moving'):
+            path_parts.append('moving')
+        else:
+            path_parts.append('fixed')
+
+        if params.get('obstacle'):
+            path_parts.append(str(params.get('obstacle')))
+
+        if params.get('symmetric') is False:
+            path_parts.append('asymmetric')
+        else:
+            path_parts.append('symmetric')
+
+        basedir = os.path.join(base_plot_dir, *path_parts[1:], param_string)
+
     os.makedirs(basedir, exist_ok=True)
 
     # Creazione file VTK

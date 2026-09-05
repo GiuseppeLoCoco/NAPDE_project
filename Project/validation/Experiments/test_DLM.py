@@ -1,22 +1,26 @@
 """
-Numerical Experiment: Upstream Buffer Layer Dirichlet Recovery via Brinkman Penalization
-Phase 1 (Conforming Benchmark on Omega_0) and Phase 2 (Buffer Recovery via Brinkman Penalization).
+Numerical Experiment: Upstream Buffer Layer Dirichlet Recovery via Distributed Lagrange Multipliers (DLM)
+Phase 1 (Conforming Benchmark on Omega_0) and Phase 2 (Buffer Recovery via DLM).
 
+Solves the flow equations directly using the project's Conforming_solver and NS_DLM_Solver classes
+without re-implementing the variational formulations or manual Stokes warm-up routines.
 """
 
 import os
 import sys
+import gc
 import math
 import warnings
-from typing import Dict, List, Tuple
+from typing import List, Tuple, Dict
 import numpy as np
 import matplotlib.pyplot as plt
 
 # Ensure Project and related directories are in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(current_dir)
+project_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
 for p in [project_dir, os.path.join(project_dir, "domain_settings"),
-         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers"),
+         os.path.join(project_dir, "validation")]:
     if p not in sys.path:
         sys.path.append(p)
 
@@ -31,8 +35,9 @@ from firedrake import (
 from domain_settings.obstacles import BufferObstacle
 from domain_settings.mesh_settings import create_unstructured_fluid_mesh
 from Utils.mms import ManufacturedSolution
-from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_Conforming import Conforming_solver
+from Solvers.NS_DLM_simple import NS_DLM_Solver
+from validation.checkpoint_loader import load_conforming_solution, load_buffer_solution
 
 
 
@@ -41,11 +46,17 @@ from Solvers.NS_Conforming import Conforming_solver
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
-                            T_end: float = 5.0, dt: float = 0.5, structured: bool = False):
+                            T_end: float = 5.0, dt: float = 0.5, structured: bool = True):
     """
     Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
-    with exact Dirichlet boundary conditions.
+    with exact Dirichlet boundary conditions. Reuses saved .h5 checkpoint if already available.
     """
+    loaded_mesh, loaded_uh, loaded_ph = load_conforming_solution(
+        obstacle_type="none", n=n, Re=mms.Re, t_final=T_end, structured=structured
+    )
+    if loaded_uh is not None:
+        return loaded_uh, loaded_ph, loaded_mesh
+
     if structured:
         ny = max(4, int(round(n * Ly / Lx)))
         mesh = RectangleMesh(n, ny, Lx, Ly)
@@ -68,33 +79,46 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
 
 
 # =============================================================================
-# 3. PHASE 2: BUFFER RECOVERY SOLVER (Omega_buf + Omega_0 with Brinkman)
+# 3. PHASE 2: BUFFER RECOVERY SOLVER (Omega_buf + Omega_0 with DLM)
 # =============================================================================
 
-def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
-                                 L_buf: float = 1.0, R_penalty: float = 1.0e5,
-                                 T_end: float = 5.0, dt: float = 0.5, structured: bool = False):
+def solve_phase2_dlm_buffer(n: int, mms: ManufacturedSolution,
+                            Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
+                            T_end: float = 5.0, dt: float = 0.5, structured: bool = False):
     """
-    Solves extended problem on [-L_buf, Lx] x [0, Ly] using Brinkman_solver with BufferObstacle.
+    Solves Navier-Stokes on extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver.
+    Reuses saved .h5 checkpoint if already available.
     """
+    loaded_mesh, loaded_uh, loaded_ph = load_buffer_solution(
+        solver_name="DLM", n=n, Re=mms.Re, t_final=T_end, structured=structured
+    )
+    if loaded_uh is not None:
+        return loaded_uh, loaded_ph, loaded_mesh
+
     nx_phys = n
     nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
     ny = max(4, int(round(n * Ly / Lx)))
     L_tot = L_buf + Lx
 
+    # Fluid mesh on extended domain
     if structured:
-        mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+        fluid_mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
     else:
-        mesh = create_unstructured_fluid_mesh(L_tot, Ly, n_tot)
+        fluid_mesh = create_unstructured_fluid_mesh(L_tot, Ly, n_tot)
 
-    mesh.coordinates.dat.data[:, 0] -= L_buf
+    fluid_mesh.coordinates.dat.data[:, 0] -= L_buf
+
+    # Solid mesh on buffer region [-L_buf, 0] x [0, Ly]
+    solid_mesh = RectangleMesh(nx_buf, ny, L_buf, Ly)
+    solid_mesh.coordinates.dat.data[:, 0] -= L_buf
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = Brinkman_solver(moving=False, n=n, R=R_penalty, Re=mms.Re, structured=structured)
+    solver = NS_DLM_Solver(moving=False, type_obstacle="buffer", n=n, Re=mms.Re, structured=structured)
 
-    mesh_out, uh, ph = solver.Brinkman_solve(
-        mesh=mesh,
+    mesh_out, uh, ph = solver.NS_DLM_Solve(
+        fluid_mesh=fluid_mesh,
+        solid_mesh=solid_mesh,
         obstacle=buf_obstacle,
         f_custom=mms.f_forcing,
         u_exact=mms.u_exact,
@@ -108,11 +132,11 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
 
 
 # =============================================================================
-# 4. ERROR EVALUATION & INTERFACE EXTRACTION
+# 4. ERROR EVALUATION & PROFILE EXTRACTION
 # =============================================================================
 
 def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
-    """Compute the errors L2(u), H1(u) and L2(p) on Omega_0."""
+    """Computes exact L2(u), H1(u), and L2(p) error norms on Omega_0 for Phase 1 Conforming."""
     u_ex = mms.u_exact(mesh)
     p_ex = mms.p_exact(mesh)
 
@@ -120,9 +144,10 @@ def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[floa
     err_L2_u = sqrt(assemble(inner(err_u, err_u) * dx(domain=mesh)))
     err_H1_u = sqrt(assemble((inner(err_u, err_u) + inner(grad(err_u), grad(err_u))) * dx(domain=mesh)))
 
-    vol = assemble(Constant(1.0) * dx(domain=mesh))
-    mean_ph = assemble(ph * dx(domain=mesh)) / vol
-    mean_pex = assemble(p_ex * dx(domain=mesh)) / vol
+    vol_domain = assemble(Constant(1.0) * dx(domain=mesh))
+    mean_ph = assemble(ph * dx(domain=mesh)) / vol_domain
+    mean_pex = assemble(p_ex * dx(domain=mesh)) / vol_domain
+
     err_p = (ph - mean_ph) - (p_ex - mean_pex)
     err_L2_p = sqrt(assemble(inner(err_p, err_p) * dx(domain=mesh)))
 
@@ -130,13 +155,12 @@ def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[floa
 
 
 def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
-    """Compute the errors L2(u), H1(u) e L2(p) only on Omega_0 (x >= 0)."""
+    """Computes L2(u), H1(u), and L2(p) error norms on extended domain restricted strictly to Omega_0 (x >= 0)."""
     X = SpatialCoordinate(mesh)
-    x = X[0]
+    mask_phys = conditional(ge(X[0], 0.0), 1.0, 0.0)
+
     u_ex = mms.u_exact(mesh)
     p_ex = mms.p_exact(mesh)
-
-    mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
 
     err_u = uh - u_ex
     err_L2_u = sqrt(assemble(mask_phys * inner(err_u, err_u) * dx(domain=mesh)))
@@ -145,6 +169,7 @@ def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) ->
     vol_phys = assemble(mask_phys * dx(domain=mesh))
     mean_ph = assemble(mask_phys * ph * dx(domain=mesh)) / vol_phys
     mean_pex = assemble(mask_phys * p_ex * dx(domain=mesh)) / vol_phys
+
     err_p = (ph - mean_ph) - (p_ex - mean_pex)
     err_L2_p = sqrt(assemble(mask_phys * inner(err_p, err_p) * dx(domain=mesh)))
 
@@ -152,7 +177,7 @@ def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) ->
 
 
 def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 150) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract the vertical profile of velocity u_x along the interface Sigma (x = 0)."""
+    """Extract vertical velocity profile u_x along the interface Sigma (x = 0)."""
     y_coords = np.linspace(0.0, mms.Ly, num_points)
     u_num_x = np.zeros(num_points)
     u_exact_x = np.zeros(num_points)
@@ -167,69 +192,75 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
             except Exception:
                 u_num_x[i] = 0.0
 
-            # Exact analytical value: sin(pi * 0 / Lx) * sin(2*pi*y / Ly) = 0
             u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
 
 
 # =============================================================================
-# 5. PIPELINE for ANALYSIS and COMPARISON
+# 5. PIPELINE EXECUTION
 # =============================================================================
 
-def run_experiment_pipeline(
-    resolutions: List[int] = [75, 100, 125],
+def run_dlm_experiment_pipeline(
+    resolutions: List[int] = [40, 80, 120, 160],
     Lx: float = 4.0,
     Ly: float = 1.0,
     L_buf: float = 1.0,
     Re: float = 40.0,
-    R_penalty: float = 1.0e4,
     T_end: float = 5.0,
-    dt: float = 0.5,
-    structured: bool = False,
-    output_dir: str = "buffer_experiment_results"
+    dt_phase1: float = 0.5,
+    dt_phase2: float = 0.5,
+    structured_phase1: bool = False,
+    structured_phase2: bool = False,
+    output_dir: str = None
 ):
+    mesh_type_str = "structured" if structured_phase2 else "unstructured"
+    if output_dir is None:
+        output_dir = os.path.join(project_dir, "Plots", "Buffer", "DLM", mesh_type_str)
+
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
-    print("=" * 80)
-    print("UPSTREAM BUFFER RECOVERY EXPERIMENT: CONFORMING vs BRINKMAN BUFFER")
-    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e} | Structured: {structured}")
-    print(f"Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
-    print("=" * 80)
+    print("=" * 90)
+    print("UPSTREAM BUFFER RECOVERY EXPERIMENT: DLM BUFFER")
+    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] x [0, {Ly}] | Re = {Re}")
+    print(f"Phase 1 Structured = {structured_phase1} (dt = {dt_phase1}s) | Phase 2 Structured = {structured_phase2} (dt = {dt_phase2}s)")
+    print(f"Mesh Resolutions n: {resolutions} | Final Time T: {T_end}s")
+    print(f"Output directory: {output_dir}")
+    print("=" * 90)
 
     res_p1 = {"L2_u": [], "H1_u": [], "L2_p": []}
     res_p2 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
     
-    profiles_p2 = {}
+    profiles_p2: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     h_vals = [Lx / n for n in resolutions]
 
-    # --- Loop of simulation on every resolution ---
     for n in resolutions:
-        print(f"\n---> Running Resolution n = {n} (h = {Lx/n:.4f})")
-        
-        # 1. Phase 1: Conforming
-        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
+        print(f"\n---> Running / Checking Resolution n = {n:3d} (h = {Lx/n:.4f}) ...")
+
+        # 1. Phase 1: Conforming Benchmark
+        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt_phase1, structured=structured_phase1)
         e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
         res_p1["L2_u"].append(e_L2_u1)
         res_p1["H1_u"].append(e_H1_u1)
         res_p1["L2_p"].append(e_L2_p1)
-        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.4e} | H1(u): {e_H1_u1:.4e} | L2(p): {e_L2_p1:.4e}")
+        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e}")
 
-        # 2. Phase 2: Buffer Brinkman
-        uh_2, ph_2, mesh_2 = solve_phase2_brinkman_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt, structured=structured)
+        # 2. Phase 2: DLM Buffer Recovery
+        uh_2, ph_2, mesh_2 = solve_phase2_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt_phase2, structured=structured_phase2)
         e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms)
-        
-        # Interface profile
-        y_pts, u_num_x, u_ex_x = extract_interface_profile(uh_2, mms)
-        profiles_p2[n] = (y_pts, u_num_x)
-        e_interf_L2 = np.sqrt(_trapezoid((u_num_x - u_ex_x)**2, y_pts))
-        
+        y_pts, u_x_num, u_x_ex = extract_interface_profile(uh_2, mms)
+        e_intf = float(np.sqrt(_trapezoid((u_x_num - u_x_ex)**2, y_pts)))
+
         res_p2["L2_u"].append(e_L2_u2)
         res_p2["H1_u"].append(e_H1_u2)
         res_p2["L2_p"].append(e_L2_p2)
-        res_p2["interf_L2"].append(e_interf_L2)
-        print(f"  [Phase 2 Buffer Rec] L2(u): {e_L2_u2:.4e} | H1(u): {e_H1_u2:.4e} | L2(p): {e_L2_p2:.4e} | Intf_L2(x=0): {e_interf_L2:.4e}")
+        res_p2["interf_L2"].append(e_intf)
+        profiles_p2[n] = (y_pts, u_x_num)
+        print(f"  [Phase 2 DLM Buffer] L2(u): {e_L2_u2:.5e} | H1(u): {e_H1_u2:.5e} | L2(p): {e_L2_p2:.5e} | Interface L2: {e_intf:.5e}")
+
+        del uh_1, ph_1, mesh_1, uh_2, ph_2, mesh_2
+        gc.collect()
 
     # -------------------------------------------------------------------------
     # 5. PRINT CONVERGENCE SUMMARY TABLES (via experiment_plots module)
@@ -245,33 +276,33 @@ def run_experiment_pipeline(
         h_vals=h_vals,
         res_p1=res_p1,
         res_p2=res_p2,
-        method_name="Brinkman"
+        method_name="DLM"
     )
 
     # -------------------------------------------------------------------------
     # 6. GENERATE COMPARISON PLOTS (via experiment_plots module)
     # -------------------------------------------------------------------------
 
-    # Figure 1: Convergence plot Log-Log
+    # Plot 1: Spatial Log-Log Convergence Plot
     conv_plot_path = os.path.join(output_dir, "convergence_comparison_loglog.png")
     plot_phase_comparison_loglog(
         h_vals=h_vals,
         res_p1=res_p1,
         res_p2=res_p2,
-        method_name="Brinkman",
+        method_name="DLM",
         output_path=conv_plot_path
     )
 
-    # Figure 2: Recovery of the velocity profile x = 0
-    profile_plot_path = os.path.join(output_dir, "interface_velocity_recovery.png")
-    brinkman_labels = [f"Brinkman Rec. (n={n})" for n in resolutions]
+    # Plot 2: Interface Velocity Cut Profile
+    prof_plot_path = os.path.join(output_dir, "interface_velocity_recovery.png")
+    dlm_labels = [f"DLM Rec. (n={n})" for n in resolutions]
     plot_interface_velocity_profile(
         profiles=profiles_p2,
         Ly=Ly,
         keys=resolutions,
         title="Velocity Profile Recovery at Interface $\\Sigma$ ($x = 0$)",
-        output_path=profile_plot_path,
-        custom_labels=brinkman_labels,
+        output_path=prof_plot_path,
+        custom_labels=dlm_labels,
         xlim=(0.8, 1.2)
     )
 
@@ -281,15 +312,16 @@ def run_experiment_pipeline(
 # =============================================================================
 
 if __name__ == "__main__":
-    run_experiment_pipeline(
-        resolutions=[40,80,120,160],       # Resolutions
+    run_dlm_experiment_pipeline(
+        resolutions=[40, 80, 120],
         Lx=4.0,
         Ly=1.0,
-        L_buf=1.0,                      # Length of the buffer region
+        L_buf=1.0,
         Re=40.0,
-        R_penalty=1.0e3,                # Brinkman penalty term
-        T_end=10,                      # Final time
-        dt=0.5,
-        structured=False,               # Unstructured mesh
-        output_dir="results_Brinkman_buffer_recovery"
+        T_end=10,
+        dt_phase1=0.1,                  # Time step for Phase 1 Conforming
+        dt_phase2=0.1,                  # Time step for Phase 2 Buffer Recovery
+        structured_phase1=False,         # Phase 1 Conforming 
+        structured_phase2=False,        # Phase 2 Buffer Recovery 
+        output_dir=None
     )

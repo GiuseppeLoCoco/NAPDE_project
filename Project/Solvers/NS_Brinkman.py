@@ -111,6 +111,11 @@ class Brinkman_solver:
         Q = FunctionSpace(mesh, "CG", 1)
         W = V * Q
 
+        # Boundary tag mapping (both RectangleMesh and Gmsh):
+        # 1 = Left (Inflow), 2 = Right (Outflow), 3 = Bottom, 4 = Top
+        dirichlet_tags = (1, 3, 4)
+        outflow_tag = 2
+
         # Define boundary conditions
         if u_ex_val is not None:
             if g_ex_val is None:
@@ -118,11 +123,7 @@ class Brinkman_solver:
                 if p_ex_val is not None:
                     bcs.append(DirichletBC(W.sub(1), p_ex_val, "on_boundary"))
             else:
-                bcs = [
-                    DirichletBC(W.sub(0), u_ex_val, 1),
-                    DirichletBC(W.sub(0), u_ex_val, 3),
-                    DirichletBC(W.sub(0), u_ex_val, 4)
-                ]
+                bcs = [DirichletBC(W.sub(0), u_ex_val, tag) for tag in dirichlet_tags]
         else:
             bcs = create_bcs_penalty(W, mesh, type_obstacle=self.type_obstacle)
 
@@ -167,7 +168,7 @@ class Brinkman_solver:
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=mesh)
-            L += inner(g_ex_val, v)*ds_b(2)
+            L += inner(g_ex_val, v)*ds_b(outflow_tag)
 
 
         # =========================================
@@ -181,6 +182,7 @@ class Brinkman_solver:
             'R': R,
             'Re': Re,
             'is_mms': (u_exact is not None),
+            'structured': getattr(self, 'structured', True)
         }
         basedir, file_dict = create_output_folders('Brinkman', params, extra_fields=['phi', 'chi'])
 

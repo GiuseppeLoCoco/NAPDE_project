@@ -126,96 +126,52 @@ def _safe_load_solution_pair(mesh_file: str, vel_file: str, press_file: str):
     return mesh, u, p
 
 
-def load_conforming_solution(obstacle_type: str = "square", n: int = 320, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
-    """
-    Checks for an existing conforming reference simulation in Plots/Conforming/fixed/<obstacle>/symmetric/n{n}_Re{Re}/
-    matching n and Re, taking the checkpoint at t = t_final (if specified) or latest available time step t.
-    Returns (ref_mesh, u_ref, p_ref) or (None, None, None).
-    """
+def _find_candidate_bases(solver_name: str, structured: Optional[bool], obstacle_type: Optional[str] = None):
+    """Generates candidate base directories with and without structured/unstructured folder."""
     sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
-    conforming_base = os.path.join(project_dir, "Plots", "Conforming", "fixed", obstacle_type, sym_str)
+    bases = []
+    
+    if obstacle_type:
+        if structured is not None:
+            m_str = "structured" if structured else "unstructured"
+            bases.append(os.path.join(project_dir, "Plots", solver_name, m_str, "fixed", obstacle_type, sym_str))
+        bases.append(os.path.join(project_dir, "Plots", solver_name, "fixed", obstacle_type, sym_str))
+        bases.append(os.path.join(project_dir, "Plots", solver_name, "structured", "fixed", obstacle_type, sym_str))
+        bases.append(os.path.join(project_dir, "Plots", solver_name, "unstructured", "fixed", obstacle_type, sym_str))
+    else:
+        # Buffer cases
+        if structured is not None:
+            m_str = "structured" if structured else "unstructured"
+            bases.append(os.path.join(project_dir, "Plots", "Buffer", solver_name, m_str))
+        bases.append(os.path.join(project_dir, "Plots", "Buffer", solver_name, "structured"))
+        bases.append(os.path.join(project_dir, "Plots", "Buffer", solver_name, "unstructured"))
+        bases.append(os.path.join(project_dir, "Plots", "Buffer", solver_name))
+        
+    # Deduplicate preserving order
+    seen = set()
+    return [b for b in bases if b not in seen and not seen.add(b)]
 
-    if os.path.exists(conforming_base):
-        for folder in os.listdir(conforming_base):
+
+def load_buffer_solution(solver_name: str, n: int, Re: float, t_final: Optional[float] = None,
+                         structured: bool = False, R_val: Optional[float] = None, **kwargs):
+    """
+    Checks for an existing simulation in Plots/Buffer/<solver_name>/<structured|unstructured>/n{n}_...
+    at time t = t_final. Returns (mesh, uh, ph) or (None, None, None).
+    """
+    candidate_bases = _find_candidate_bases(solver_name, structured, obstacle_type=None)
+
+    for base_dir_candidate in candidate_bases:
+        if not os.path.exists(base_dir_candidate):
+            continue
+
+        for folder in os.listdir(base_dir_candidate):
             if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
-                base_dir = os.path.join(conforming_base, folder)
-                mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+                if R_val is not None:
+                    r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_", f"_R{R_val}"]
+                    if not (any(rm in folder for rm in r_matches) or folder.endswith(f"_R{R_val}")):
+                        continue
 
-                if t_final is not None:
-                    vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
-                    press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
-                    if os.path.exists(vel_file) and os.path.exists(press_file):
-                        try:
-                            mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                            print(f"\n--- Found and loaded Conforming reference (t={t_final:.2f}s) from {base_dir} ---")
-                            return mesh, u, p
-                        except Exception as e:
-                            print(f"Warning: Error loading Conforming from {base_dir}: {e}")
-                else:
-                    mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
-                    if vel_file is not None and press_file is not None:
-                        try:
-                            mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                            print(f"\n--- Found and loaded Conforming reference (t={t_found:.2f}s) from {base_dir} ---")
-                            return mesh, u, p
-                        except Exception as e:
-                            print(f"Warning: Error loading from {base_dir}: {e}")
-
-    return None, None, None
-
-
-def load_brinkman_solution(obstacle_type: str = "square", n: int = 320, R_val: float = 1000.0, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
-    """
-    Checks for an existing Brinkman simulation in Plots/Brinkman/fixed/<obstacle>/symmetric/n{n}_R{R}_Re{Re}/.
-    If t_final is specified, requires an exact match at t = t_final (returns None if not available).
-    Returns (mesh, uh, ph) or (None, None, None).
-    """
-    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
-    brinkman_base = os.path.join(project_dir, "Plots", "Brinkman", "fixed", obstacle_type, sym_str)
-
-    if os.path.exists(brinkman_base):
-        for folder in os.listdir(brinkman_base):
-            if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
-                r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_"]
-                if any(rm in folder for rm in r_matches) or f"_R{R_val}" in folder:
-                    base_dir = os.path.join(brinkman_base, folder)
-                    mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
-
-                    if t_final is not None:
-                        vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
-                        press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
-                        if os.path.exists(vel_file) and os.path.exists(press_file):
-                            try:
-                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                                print(f"--- Found and loaded Brinkman solution (R={R_val:.1e}, t={t_final:.2f}s) from {base_dir} ---")
-                                return mesh, u, p
-                            except Exception as e:
-                                print(f"Warning: Error loading Brinkman from {base_dir}: {e}")
-                    else:
-                        mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
-                        if vel_file is not None and press_file is not None:
-                            try:
-                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                                print(f"--- Found and loaded Brinkman solution (R={R_val:.1e}, t={t_found:.2f}s) from {base_dir} ---")
-                                return mesh, u, p
-                            except Exception:
-                                pass
-    return None, None, None
-
-
-def load_dlm_solution(obstacle_type: str = "square", n: int = 320, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
-    """
-    Checks for an existing DLM simulation in Plots/DLM/fixed/<obstacle>/symmetric/n{n}_Re{Re}/.
-    If t_final is specified, requires an exact match at t = t_final (returns None if not available).
-    Returns (mesh, uh, ph) or (None, None, None).
-    """
-    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
-    dlm_base = os.path.join(project_dir, "Plots", "DLM", "fixed", obstacle_type, sym_str)
-
-    if os.path.exists(dlm_base):
-        for folder in os.listdir(dlm_base):
-            if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
-                base_dir = os.path.join(dlm_base, folder)
+                base_dir = os.path.join(base_dir_candidate, folder)
                 mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
 
                 if t_final is not None:
@@ -224,37 +180,125 @@ def load_dlm_solution(obstacle_type: str = "square", n: int = 320, Re: float = 4
                     if os.path.exists(vel_file):
                         try:
                             mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file if os.path.exists(press_file) else None)
-                            print(f"--- Found and loaded DLM solution (n={n}, Re={Re}, t={t_final:.2f}s) from {base_dir} ---")
+                            print(f">> [CheckpointLoader] Found & loaded {solver_name} Buffer solution (n={n}, t={t_final:.2f}s) from {base_dir}")
                             return mesh, u, p
                         except Exception as e:
-                            print(f"Warning: Error loading DLM from {base_dir}: {e}")
+                            print(f"Warning: Error loading Buffer checkpoint from {base_dir}: {e}")
                 else:
                     mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
                     if vel_file is not None:
                         try:
                             mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                            print(f"--- Found and loaded DLM solution (n={n}, Re={Re}, t={t_found:.2f}s) from {base_dir} ---")
+                            print(f">> [CheckpointLoader] Found & loaded {solver_name} Buffer solution (n={n}, t={t_found:.2f}s) from {base_dir}")
                             return mesh, u, p
                         except Exception:
                             pass
+
     return None, None, None
 
 
-def load_riis_solution(obstacle_type: str = "square", n: int = 320, R_val: float = 1000.0, Re: float = 40.0, t_final: Optional[float] = None, **kwargs):
+def load_conforming_solution(obstacle_type: str = "square", n: int = 320, Re: float = 40.0,
+                             t_final: Optional[float] = None, structured: Optional[bool] = None, **kwargs):
     """
-    Checks for an existing RIIS simulation in Plots/RIIS/fixed/<obstacle>/symmetric/n{n}_R{R}_Re{Re}/.
-    If t_final is specified, requires an exact match at t = t_final (returns None if not available).
+    Checks for an existing conforming simulation matching n, Re, and structured at time t_final.
+    Returns (ref_mesh, u_ref, p_ref) or (None, None, None).
+    """
+    if obstacle_type in ["none", "None", None, "buffer"]:
+        # First check in Plots/Buffer/Conforming/
+        res = load_buffer_solution("Conforming", n=n, Re=Re, t_final=t_final, structured=bool(structured))
+        if res[0] is not None:
+            return res
+
+    candidate_bases = _find_candidate_bases("Conforming", structured, obstacle_type=obstacle_type if obstacle_type else "square")
+
+    for conforming_base in candidate_bases:
+        if os.path.exists(conforming_base):
+            for folder in os.listdir(conforming_base):
+                if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                    base_dir = os.path.join(conforming_base, folder)
+                    mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+
+                    if t_final is not None:
+                        vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
+                        press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
+                        if os.path.exists(vel_file) and os.path.exists(press_file):
+                            try:
+                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                print(f">> [CheckpointLoader] Found & loaded Conforming solution (n={n}, t={t_final:.2f}s) from {base_dir}")
+                                return mesh, u, p
+                            except Exception as e:
+                                print(f"Warning: Error loading Conforming from {base_dir}: {e}")
+                    else:
+                        mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
+                        if vel_file is not None and press_file is not None:
+                            try:
+                                mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                print(f">> [CheckpointLoader] Found & loaded Conforming solution (n={n}, t={t_found:.2f}s) from {base_dir}")
+                                return mesh, u, p
+                            except Exception as e:
+                                print(f"Warning: Error loading from {base_dir}: {e}")
+
+    return None, None, None
+
+
+def load_brinkman_solution(obstacle_type: str = "square", n: int = 320, R_val: float = 1000.0,
+                           Re: float = 40.0, t_final: Optional[float] = None, structured: Optional[bool] = None, **kwargs):
+    """
+    Checks for an existing Brinkman simulation matching parameters at t = t_final.
     Returns (mesh, uh, ph) or (None, None, None).
     """
-    sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
-    riis_base = os.path.join(project_dir, "Plots", "RIIS", "fixed", obstacle_type, sym_str)
+    if obstacle_type in ["none", "None", None, "buffer"]:
+        return load_buffer_solution("Brinkman", n=n, Re=Re, t_final=t_final, structured=bool(structured), R_val=R_val)
 
-    if os.path.exists(riis_base):
-        for folder in os.listdir(riis_base):
-            if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
-                r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_", f"_R{R_val}"]
-                if any(rm in folder for rm in r_matches) or folder.endswith(f"_R{R_val}"):
-                    base_dir = os.path.join(riis_base, folder)
+    candidate_bases = _find_candidate_bases("Brinkman", structured, obstacle_type=obstacle_type)
+
+    for brinkman_base in candidate_bases:
+        if os.path.exists(brinkman_base):
+            for folder in os.listdir(brinkman_base):
+                if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                    r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_"]
+                    if any(rm in folder for rm in r_matches) or f"_R{R_val}" in folder:
+                        base_dir = os.path.join(brinkman_base, folder)
+                        mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+
+                        if t_final is not None:
+                            vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
+                            press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
+                            if os.path.exists(vel_file) and os.path.exists(press_file):
+                                try:
+                                    mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                    print(f">> [CheckpointLoader] Found & loaded Brinkman solution (R={R_val:.1e}, t={t_final:.2f}s) from {base_dir}")
+                                    return mesh, u, p
+                                except Exception as e:
+                                    print(f"Warning: Error loading Brinkman from {base_dir}: {e}")
+                        else:
+                            mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
+                            if vel_file is not None and press_file is not None:
+                                try:
+                                    mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                    print(f">> [CheckpointLoader] Found & loaded Brinkman solution (R={R_val:.1e}, t={t_found:.2f}s) from {base_dir}")
+                                    return mesh, u, p
+                                except Exception:
+                                    pass
+    return None, None, None
+
+
+def load_dlm_solution(obstacle_type: str = "square", n: int = 320, Re: float = 40.0,
+                      t_final: Optional[float] = None, structured: Optional[bool] = None, **kwargs):
+    """
+    Checks for an existing DLM simulation matching parameters at t = t_final.
+    Returns (mesh, uh, ph) or (None, None, None).
+    """
+    if obstacle_type in ["none", "None", None, "buffer"]:
+        return load_buffer_solution("DLM", n=n, Re=Re, t_final=t_final, structured=bool(structured))
+
+    candidate_bases = _find_candidate_bases("DLM", structured, obstacle_type=obstacle_type)
+
+    for dlm_base in candidate_bases:
+        if os.path.exists(dlm_base):
+            for folder in os.listdir(dlm_base):
+                if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                    base_dir = os.path.join(dlm_base, folder)
                     mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
 
                     if t_final is not None:
@@ -263,19 +307,61 @@ def load_riis_solution(obstacle_type: str = "square", n: int = 320, R_val: float
                         if os.path.exists(vel_file):
                             try:
                                 mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file if os.path.exists(press_file) else None)
-                                print(f"--- Found and loaded RIIS solution (R={R_val:.1e}, t={t_final:.2f}s) from {base_dir} ---")
+                                print(f">> [CheckpointLoader] Found & loaded DLM solution (n={n}, Re={Re}, t={t_final:.2f}s) from {base_dir}")
                                 return mesh, u, p
                             except Exception as e:
-                                print(f"Warning: Error loading RIIS from {base_dir}: {e}")
+                                print(f"Warning: Error loading DLM from {base_dir}: {e}")
                     else:
                         mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
                         if vel_file is not None:
                             try:
                                 mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
-                                print(f"--- Found and loaded RIIS solution (R={R_val:.1e}, t={t_found:.2f}s) from {base_dir} ---")
+                                print(f">> [CheckpointLoader] Found & loaded DLM solution (n={n}, Re={Re}, t={t_found:.2f}s) from {base_dir}")
                                 return mesh, u, p
                             except Exception:
                                 pass
+    return None, None, None
+
+
+def load_riis_solution(obstacle_type: str = "square", n: int = 320, R_val: float = 1000.0,
+                       Re: float = 40.0, t_final: Optional[float] = None, structured: Optional[bool] = None, **kwargs):
+    """
+    Checks for an existing RIIS simulation matching parameters at t = t_final.
+    Returns (mesh, uh, ph) or (None, None, None).
+    """
+    if obstacle_type in ["none", "None", None, "buffer"]:
+        return load_buffer_solution("RIIS", n=n, Re=Re, t_final=t_final, structured=bool(structured), R_val=R_val)
+
+    candidate_bases = _find_candidate_bases("RIIS", structured, obstacle_type=obstacle_type)
+
+    for riis_base in candidate_bases:
+        if os.path.exists(riis_base):
+            for folder in os.listdir(riis_base):
+                if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                    r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_", f"_R{R_val}"]
+                    if any(rm in folder for rm in r_matches) or folder.endswith(f"_R{R_val}"):
+                        base_dir = os.path.join(riis_base, folder)
+                        mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
+
+                        if t_final is not None:
+                            vel_file = os.path.join(base_dir, "velocity", f"velocity_t={t_final:.2f}.h5")
+                            press_file = os.path.join(base_dir, "pressure", f"pressure_t={t_final:.2f}.h5")
+                            if os.path.exists(vel_file):
+                                try:
+                                    mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file if os.path.exists(press_file) else None)
+                                    print(f">> [CheckpointLoader] Found & loaded RIIS solution (R={R_val:.1e}, t={t_final:.2f}s) from {base_dir}")
+                                    return mesh, u, p
+                                except Exception as e:
+                                    print(f"Warning: Error loading RIIS from {base_dir}: {e}")
+                        else:
+                            mesh_file, vel_file, press_file, t_found = find_latest_checkpoint_in_dir(base_dir)
+                            if vel_file is not None:
+                                try:
+                                    mesh, u, p = _safe_load_solution_pair(mesh_file, vel_file, press_file)
+                                    print(f">> [CheckpointLoader] Found & loaded RIIS solution (R={R_val:.1e}, t={t_found:.2f}s) from {base_dir}")
+                                    return mesh, u, p
+                                except Exception:
+                                    pass
     return None, None, None
 
 

@@ -24,10 +24,10 @@ class Stokes_Solver:
         else:
             self.mu = self.rho * self.L_char * self.u_char / self.Re
 
-    def solve_initial_velocity(self, mesh, bcs, f_custom=None, g_custom=None, W=None):
+    def solve_initial_velocity(self, mesh, bcs, f_custom=None, g_custom=None, W=None, structured=False):
         """
         Solves:
-            a(u, v) - (p, div v) + (div u, q) = (f, v) + <g, v>_Gamma2
+            a(u, v) - (p, div v) + (div u, q) = (f, v) + <g, v>_Gamma_outflow
         with direct MUMPS LU factorization.
         Returns:
             (uh, ph) as Function on velocity and pressure spaces.
@@ -79,7 +79,7 @@ class Stokes_Solver:
 def solve_stokes_initial(mesh, bcs, mu=None, Re=None, f_custom=None, g_custom=None, W=None):
     """
     Unified entry-point for Stokes initialization called identically
-    by all Navier-Stokes solvers (Conforming, DLM, Brinkman).
+    by all Navier-Stokes solvers (Conforming, DLM, Brinkman, RIIS).
     """
     solver = Stokes_Solver(mu=mu, Re=Re)
     return solver.solve_initial_velocity(mesh=mesh, bcs=bcs, f_custom=f_custom, g_custom=g_custom, W=W)

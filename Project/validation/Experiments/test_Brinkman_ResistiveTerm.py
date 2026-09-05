@@ -19,9 +19,10 @@ import matplotlib.pyplot as plt
 
 # Ensure Project and related directories are in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(current_dir)
+project_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
 for p in [project_dir, os.path.join(project_dir, "domain_settings"),
-         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
+         os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers"),
+         os.path.join(project_dir, "validation")]:
     if p not in sys.path:
         sys.path.append(p)
 
@@ -38,6 +39,7 @@ from domain_settings.obstacles import BufferObstacle
 from domain_settings.mesh_settings import create_unstructured_fluid_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
+from validation.checkpoint_loader import load_buffer_solution
 
 
 
@@ -50,8 +52,14 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
                           T_end: float = 2.0, dt: float = 0.5, structured: bool = False) -> Tuple[object, object, object]:
     """
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
-    using the Brinkman_solver class.
+    using the Brinkman_solver class. Reuses saved .h5 checkpoint if already available.
     """
+    loaded_mesh, loaded_uh, loaded_ph = load_buffer_solution(
+        solver_name="Brinkman", n=n, Re=mms.Re, t_final=T_end, structured=structured, R_val=R_val
+    )
+    if loaded_uh is not None:
+        return loaded_uh, loaded_ph, loaded_mesh
+
     nx_phys = n
     nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
@@ -102,6 +110,7 @@ def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[
     vol_phys = assemble(mask_phys * dx(domain=mesh))
     mean_ph = assemble(mask_phys * ph * dx(domain=mesh)) / vol_phys
     mean_pex = assemble(mask_phys * p_ex * dx(domain=mesh)) / vol_phys
+
     err_p = (ph - mean_ph) - (p_ex - mean_pex)
     err_L2_p = sqrt(assemble(mask_phys * inner(err_p, err_p) * dx(domain=mesh)))
 
@@ -109,7 +118,7 @@ def compute_restricted_errors(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[
 
 
 def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 150) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extracts vertical cut of u_x at the physical interface Sigma (x = 0)."""
+    """Extracts vertical velocity cut u_x at the physical interface Sigma (x = 0)."""
     y_coords = np.linspace(0.0, mms.Ly, num_points)
     u_num_x = np.zeros(num_points)
     u_exact_x = np.zeros(num_points)
@@ -122,6 +131,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
                 u_num_x[i] = val[0]
             except Exception:
                 u_num_x[i] = 0.0
+
             u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
@@ -132,7 +142,7 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
 # =============================================================================
 
 def run_r_scaling_analysis(
-    resolutions: List[int] = [40,80,120,160],
+    resolutions: List[int] = [40, 80, 120, 160],
     R_base: float = 1.0e4,
     Lx: float = 4.0,
     Ly: float = 1.0,
@@ -141,8 +151,12 @@ def run_r_scaling_analysis(
     T_end: float = 2.0,
     dt: float = 0.5,
     structured: bool = False,
-    output_dir: str = "results_strategy_B_R_scaling"
+    output_dir: str = None
 ):
+    mesh_type_str = "structured" if structured else "unstructured"
+    if output_dir is None:
+        output_dir = os.path.join(project_dir, "Plots", "Buffer", "Brinkman_ResistiveTerm", mesh_type_str)
+
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
@@ -150,6 +164,7 @@ def run_r_scaling_analysis(
     print("STRATEGY B: SPATIAL CONVERGENCE WITH BALANCED PENALTY SCALING R(h) ~ h^-2")
     print(f"Resolutions n: {resolutions} | Base Penalty R_0 = {R_base:.1e} at n_min = {resolutions[0]} | Structured = {structured}")
     print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] | Re = {Re}")
+    print(f"Output directory: {output_dir}")
     print("=" * 90)
 
     n_min = float(resolutions[0])
@@ -160,7 +175,7 @@ def run_r_scaling_analysis(
     profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
 
     for n, R_val in zip(resolutions, scaled_R_vals):
-        print(f"\n---> Running n = {n:3d} (h = {Lx/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
+        print(f"\n---> Running / Checking n = {n:3d} (h = {Lx/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
         uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt, structured=structured)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
@@ -230,7 +245,7 @@ def run_r_scaling_analysis(
 
 if __name__ == "__main__":
     run_r_scaling_analysis(
-        resolutions=[40,80,120,160],
+        resolutions=[40, 80, 120, 160],
         R_base=1.0e3,
         Lx=4.0,
         Ly=1.0,
@@ -239,5 +254,5 @@ if __name__ == "__main__":
         T_end=10.0,
         dt=0.5,
         structured=False,               # Unstructured mesh
-        output_dir="results_buffer_recovery"
+        output_dir=None
     )

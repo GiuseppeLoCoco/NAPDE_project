@@ -200,6 +200,11 @@ class NS_DLM_Solver:
         Lm_[0].assign(0.0)
         Lm_[1].assign(0.0)
 
+        # Boundary tag mapping (both RectangleMesh and Gmsh):
+        # 1 = Left (Inflow), 2 = Right (Outflow), 3 = Bottom, 4 = Top
+        dirichlet_tags = (1, 3, 4)
+        outflow_tag = 2
+
         # Create boundary conditions dictionary and setup
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
         if u_ex_val is not None:
@@ -209,16 +214,8 @@ class NS_DLM_Solver:
                     bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, "on_boundary"))
                 bcs_correction = [DirichletBC(V, u_ex_val, "on_boundary")]
             else:
-                bcs = [
-                    DirichletBC(FS['fluid'][0], u_ex_val, 1),
-                    DirichletBC(FS['fluid'][0], u_ex_val, 3),
-                    DirichletBC(FS['fluid'][0], u_ex_val, 4)
-                ]
-                bcs_correction = [
-                    DirichletBC(V, u_ex_val, 1),
-                    DirichletBC(V, u_ex_val, 3),
-                    DirichletBC(V, u_ex_val, 4)
-                ]
+                bcs = [DirichletBC(FS['fluid'][0], u_ex_val, tag) for tag in dirichlet_tags]
+                bcs_correction = [DirichletBC(V, u_ex_val, tag) for tag in dirichlet_tags]
         else:
             bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)
             bcs_correction = create_boundary_conditions_correction(fluid_mesh, V, type_obstacle=self.type_obstacle)
@@ -248,7 +245,7 @@ class NS_DLM_Solver:
 
         if g_ex_val is not None:
             ds_b = Measure("ds", domain=fluid_mesh.mesh)
-            L1 += inner(g_ex_val, v)*ds_b(2)
+            L1 += inner(g_ex_val, v)*ds_b(outflow_tag)
         
 
         # ------- Step 2: Lagrange multiplier (DLM-NS-S2) -------
@@ -275,6 +272,7 @@ class NS_DLM_Solver:
             'n': self.n,
             'Re': Re,
             'is_mms': (u_exact is not None),
+            'structured': getattr(self, 'structured', True)
         }
         basedir, file_dict = create_output_folders('DLM', params)
 
