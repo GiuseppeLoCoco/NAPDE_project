@@ -122,7 +122,8 @@ def run_convergence_analysis(
     R_penalty: float = 1000.0,
     dt: Optional[float] = None,
     t_final: float = 20.0,
-    t_final_conforming: Optional[float] = None
+    t_final_conforming: Optional[float] = None,
+    structured_conforming: bool = True
 ):
     """
     Executes simulations for each resolution n, loads saved results,
@@ -142,7 +143,7 @@ def run_convergence_analysis(
     print("\n" + "=" * 75)
     print(f" STARTING CONVERGENCE ANALYSIS FOR {solver_type.upper()} ({obstacle_type.upper()}, Re={Re})")
     print(f" Refinements n: {resolutions}")
-    print(f" Conforming reference n: {refinement_conforming} (at t = {t_conf:.2f}s)")
+    print(f" Conforming reference n: {refinement_conforming} (at t = {t_conf:.2f}s, structured = {structured_conforming})")
     if dt is not None:
         print(f" Time step dt: {dt}")
     print(f" Final time t_final ({solver_type.upper()}): {t_final:.2f}s")
@@ -161,8 +162,8 @@ def run_convergence_analysis(
     )
 
     if u_ex is None:
-        print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s)...")
-        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re)
+        print(f">> Running Conforming solver for exact reference solution (n = {refinement_conforming}, t_final = {t_conf:.2f}s, structured = {structured_conforming})...")
+        conf_solver = Conforming_solver(moving=False, type_obstacle=obstacle_type, n=refinement_conforming, Re=Re, structured=structured_conforming)
         conf_mesh, u_ex, p_ex = conf_solver.conforming_solve(dt=dt, t_final=t_conf)
     else:
         print(f">> Reusing loaded Conforming reference solution (n = {refinement_conforming}, t = {t_conf:.2f}s).")
@@ -320,15 +321,16 @@ if __name__ == "__main__":
     # =========================================================================
     # EDIT CONVERGENCE STUDY PARAMETERS HERE
     # =========================================================================
-    resolutions = [40, 80, 120, 160,240]        # Mesh refinement levels n to simulate
+    resolutions = [40,80,120,160]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                # "square" or "cylinder" (both stationary/fixed)
-    solver_type = "RIIS"                    # "Brinkman", "dlm", or "RIIS"
+    solver_type = "Brinkman"                    # "Brinkman", "dlm", or "RIIS"
     Re = 40.0                               # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
     refinement_conforming = 320             # Exact conforming reference mesh refinement
-    R_penalty = 100000.0                    # Resistive parameter R (for Brinkman / RIIS solver)
+    R_penalty = 10000.0                    # Resistive parameter R (for Brinkman / RIIS solver)
     dt = 0.5                                # Time step size dt (can be None to use solver default)
-    t_final = 40.0                          # Final simulation time step t_final for DLM / Brinkman / RIIS
-    t_final_conforming = 40.0               # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
+    t_final = 40                    # Final simulation time step t_final for DLM / Brinkman / RIIS
+    t_final_conforming = 40               # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
+    structured_conforming = True           # Use structured (Cartesian transfinite) conforming mesh for square
     # =========================================================================
 
     run_convergence_analysis(
@@ -340,5 +342,6 @@ if __name__ == "__main__":
         R_penalty=R_penalty,
         dt=dt,
         t_final=t_final,
-        t_final_conforming=t_final_conforming
+        t_final_conforming=t_final_conforming,
+        structured_conforming=structured_conforming
     )
