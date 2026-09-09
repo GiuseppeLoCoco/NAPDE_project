@@ -19,7 +19,7 @@ from Solvers.Stokes_solver import solve_stokes_initial
 
 class RIIS_solver:
 
-    def __init__(self, moving=False, type_obstacle="cylinder", n=None, R=None, Re=None, eps=None):
+    def __init__(self, moving=False, type_obstacle="cylinder", n=None, R=None, Re=None, eps=None, structured=True):
         self.moving = moving
         self.mean = True
         self.type_obstacle = type_obstacle
@@ -27,6 +27,7 @@ class RIIS_solver:
         self.R = R if R is not None else getattr(user_parameters, 'R', 1000.0)
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.eps = eps if eps is not None else (8.0 / self.n)
+        self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
     def RIIS_solve(self, args=None, mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
@@ -68,7 +69,10 @@ class RIIS_solver:
                     self.obstacle = rotatingLineObstacle(xA, yA, xB, yB, riis_epsilon=eps_val, thickness=line_thickness)
 
         if mesh is None:
-            mesh = RectangleMesh(self.n, max(4, int(round(self.n * Ly / Lx))), Lx, Ly)
+            if self.structured:
+                mesh = RectangleMesh(self.n, max(4, int(round(self.n * Ly / Lx))), Lx, Ly)
+            else:
+                mesh = unstructured_rectangle_mesh(0.0, Lx, 0.0, Ly, self.n, Ly_ref=Ly)
 
         # ==================================
         # DATA AND SOLVER

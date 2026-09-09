@@ -31,13 +31,14 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None):  
+    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None, structured=True):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
+        self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
 
         # Initialize the obstacle based on the type chosen
@@ -90,7 +91,7 @@ class NS_DLM_Solver:
 
         # Create the meshes
         if fluid_mesh is None:
-            fluid_mesh = create_fluid_mesh(Lx, Ly, self.n)
+            fluid_mesh = create_fluid_mesh(Lx, Ly, self.n, structured=self.structured)
         elif not hasattr(fluid_mesh, 'mesh'):
             class FluidMeshWrapper:
                 def __init__(self, m):

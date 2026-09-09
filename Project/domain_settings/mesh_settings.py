@@ -270,10 +270,84 @@ def create_solid_mesh(obstacle_obj, n):
             os.remove(tmp_solid_msh)
 		
 
+def unstructured_rectangle_mesh(xmin, xmax, ymin, ymax, n, Ly_ref=None):
+    """
+    Creates an unstructured triangular Gmsh mesh on [xmin, xmax] x [ymin, ymax].
+    The characteristic mesh size is h = (Ly_ref if Ly_ref is not None else (ymax - ymin)) / float(n).
+    Physical boundaries:
+      1: Inflow  (x == xmin)
+      2: Outflow (x == xmax)
+      3: Bottom  (y == ymin)
+      4: Top     (y == ymax)
+    Physical surface:
+      Fluid
+    """
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+
+    model = gmsh.model
+    model.add(f"UnstructuredRectangle_{os.getpid()}_{xmin:.2f}_{xmax:.2f}")
+
+    Lx = xmax - xmin
+    Ly = ymax - ymin
+    res = (Ly_ref if Ly_ref is not None else Ly) / float(n)
+
+    rect = model.occ.addRectangle(xmin, ymin, 0, Lx, Ly)
+    model.occ.synchronize()
+
+    # Physical Surface
+    model.addPhysicalGroup(2, [rect], name="Fluid")
+
+    # Boundary identification and tagging
+    tol = 1e-6
+    inflow_lines, outflow_lines = [], []
+    bottom_lines, top_lines = [], []
+
+    for dim, line_tag in model.getEntities(1):
+        com = model.occ.getCenterOfMass(dim, line_tag)
+        xc_l, yc_l = com[0], com[1]
+
+        if np.isclose(xc_l, xmin, atol=tol):
+            inflow_lines.append(line_tag)
+        elif np.isclose(xc_l, xmax, atol=tol):
+            outflow_lines.append(line_tag)
+        elif np.isclose(yc_l, ymin, atol=tol):
+            bottom_lines.append(line_tag)
+        elif np.isclose(yc_l, ymax, atol=tol):
+            top_lines.append(line_tag)
+
+    if inflow_lines: model.addPhysicalGroup(1, inflow_lines, 1, name="Inflow")
+    if outflow_lines: model.addPhysicalGroup(1, outflow_lines, 2, name="Outflow")
+    if bottom_lines: model.addPhysicalGroup(1, bottom_lines, 3, name="Bottom")
+    if top_lines: model.addPhysicalGroup(1, top_lines, 4, name="Top")
+
+    model.mesh.setSize(model.getEntities(0), res)
+    model.mesh.generate(2)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+
+    tmp_msh_file = f"tmp_mesh_unstructured_rect_{os.getpid()}_{xmin:.2f}_{xmax:.2f}.msh"
+    gmsh.write(tmp_msh_file)
+    gmsh.finalize()
+
+    try:
+        m = Mesh(tmp_msh_file)
+        return m
+    finally:
+        if os.path.exists(tmp_msh_file):
+            os.remove(tmp_msh_file)
+
+
 class create_fluid_mesh:
-    def __init__(self, Lx, Ly, n):
+    def __init__(self, Lx, Ly, n, structured=True, xmin=0.0):
         self.Lx = Lx
         self.Ly = Ly
-        nnn = n
-        ny = int(nnn * (self.Ly / self.Lx))
-        self.mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
+        self.structured = structured
+        self.xmin = xmin
+        if structured:
+            nnn = n
+            ny = max(4, int(round(nnn * (self.Ly / self.Lx))))
+            self.mesh = RectangleMesh(nnn, ny, self.Lx, self.Ly)
+            if abs(xmin) > 1e-12:
+                self.mesh.coordinates.dat.data[:, 0] += xmin
+        else:
+            self.mesh = unstructured_rectangle_mesh(xmin, xmin + Lx, 0.0, Ly, n, Ly_ref=Ly)

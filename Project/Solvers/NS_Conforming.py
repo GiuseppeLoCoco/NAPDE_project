@@ -57,7 +57,10 @@ class Conforming_solver:
             if self.obstacle is not None:
                 mesh = conforming_mesh(Lx, Ly, self.obstacle, self.n, structured=self.structured)
             else:
-                mesh = RectangleMesh(self.n, int(self.n * Ly / Lx), Lx, Ly)
+                if self.structured:
+                    mesh = RectangleMesh(self.n, max(4, int(round(self.n * Ly / Lx))), Lx, Ly)
+                else:
+                    mesh = unstructured_rectangle_mesh(0.0, Lx, 0.0, Ly, self.n, Ly_ref=Ly)
         
         tol = 1e-10
         T_end = float(t_final) if t_final is not None else 5.0

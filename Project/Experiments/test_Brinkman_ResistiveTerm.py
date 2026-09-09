@@ -35,6 +35,7 @@ from firedrake import (
 )
 
 from domain_settings.obstacles import BufferObstacle
+from domain_settings.mesh_settings import unstructured_rectangle_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
 
@@ -46,22 +47,25 @@ from Solvers.NS_Brinkman import Brinkman_solver
 
 def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
                           Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
-                          T_end: float = 2.0, dt: float = 0.5) -> Tuple[object, object, object]:
+                          T_end: float = 2.0, dt: float = 0.5, structured: bool = True) -> Tuple[object, object, object]:
     """
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
     using the Brinkman_solver class.
     """
-    nx_phys = n
-    nx_buf = max(1, int(round(n * L_buf / Lx)))
-    n_tot = nx_buf + nx_phys
-    ny = max(4, int(round(n * Ly / Lx)))
-    L_tot = L_buf + Lx
+    if structured:
+        nx_phys = n
+        nx_buf = max(1, int(round(n * L_buf / Lx)))
+        n_tot = nx_buf + nx_phys
+        ny = max(4, int(round(n * Ly / Lx)))
+        L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
-    mesh.coordinates.dat.data[:, 0] -= L_buf
+        mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+        mesh.coordinates.dat.data[:, 0] -= L_buf
+    else:
+        mesh = unstructured_rectangle_mesh(-L_buf, Lx, 0.0, Ly, n, Ly_ref=Ly)
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re)
+    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re, structured=structured)
 
     mesh_out, uh, ph = solver.Brinkman_solve(
         mesh=mesh,
@@ -70,7 +74,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -135,6 +139,7 @@ def run_r_scaling_analysis(
     Re: float = 40.0,
     T_end: float = 2.0,
     dt: float = 0.5,
+    structured: bool = True,
     output_dir: str = "results_strategy_B_R_scaling"
 ):
     os.makedirs(output_dir, exist_ok=True)
@@ -142,7 +147,7 @@ def run_r_scaling_analysis(
 
     print("=" * 90)
     print("STRATEGY B: SPATIAL CONVERGENCE WITH BALANCED PENALTY SCALING R(h) ~ h^-2")
-    print(f"Resolutions n: {resolutions} | Base Penalty R_0 = {R_base:.1e} at n_min = {resolutions[0]}")
+    print(f"Resolutions n: {resolutions} | Base Penalty R_0 = {R_base:.1e} at n_min = {resolutions[0]} | Structured: {structured}")
     print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] | Re = {Re}")
     print("=" * 90)
 
@@ -154,8 +159,8 @@ def run_r_scaling_analysis(
     profiles: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
 
     for n, R_val in zip(resolutions, scaled_R_vals):
-        print(f"\n---> Running n = {n:3d} (h = {Lx/n:.4f}) with Scaled Penalty R = {R_val:.2e} ...")
-        uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt)
+        print(f"\n---> Running n = {n:3d} (h = {Lx/n:.4f}, structured = {structured}) with Scaled Penalty R = {R_val:.2e} ...")
+        uh, ph, mesh = solve_brinkman_buffer(n, R_val, mms, Lx, Ly, L_buf, T_end, dt, structured=structured)
 
         e_L2, e_H1, e_p = compute_restricted_errors(mesh, uh, ph, mms)
         y_pts, u_x_num, u_x_ex = extract_interface_profile(uh, mms)
@@ -231,5 +236,6 @@ if __name__ == "__main__":
         Re=40.0,
         T_end=10.0,
         dt=0.5,
+        structured=True,               # Set False for unstructured mesh
         output_dir="results_buffer_recovery_v3"
     )

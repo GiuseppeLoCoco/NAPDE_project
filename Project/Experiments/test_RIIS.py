@@ -29,6 +29,7 @@ from firedrake import (
 )
 
 from domain_settings.obstacles import BufferObstacle
+from domain_settings.mesh_settings import unstructured_rectangle_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_RIIS import RIIS_solver
 from Solvers.NS_Conforming import Conforming_solver
@@ -40,15 +41,18 @@ from Solvers.NS_Conforming import Conforming_solver
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
-                            T_end: float = 5.0, dt: float = 0.5):
+                            T_end: float = 5.0, dt: float = 0.5, structured: bool = True):
     """
     Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
     with exact Dirichlet boundary conditions.
     """
-    ny = max(4, int(round(n * Ly / Lx)))
-    mesh = RectangleMesh(n, ny, Lx, Ly)
+    if structured:
+        ny = max(4, int(round(n * Ly / Lx)))
+        mesh = RectangleMesh(n, ny, Lx, Ly)
+    else:
+        mesh = unstructured_rectangle_mesh(0.0, Lx, 0.0, Ly, n, Ly_ref=Ly)
 
-    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re)
+    solver = Conforming_solver(moving=False, type_obstacle=None, n=n, Re=mms.Re, structured=structured)
     mesh_out, uh, ph = solver.conforming_solve(
         mesh=mesh,
         obstacle=None,
@@ -56,7 +60,7 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -69,22 +73,25 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
 
 def solve_phase2_riis_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
                              L_buf: float = 1.0, R_penalty: float = 1.0e5,
-                             T_end: float = 5.0, dt: float = 0.5, eps: float = None):
+                             T_end: float = 5.0, dt: float = 0.5, eps: float = None, structured: bool = True):
     """
     Solves extended problem on [-L_buf, Lx] x [0, Ly] using RIIS_solver with BufferObstacle.
     """
-    nx_phys = n
-    nx_buf = max(1, int(round(n * L_buf / Lx)))
-    n_tot = nx_buf + nx_phys
-    ny = max(4, int(round(n * Ly / Lx)))
-    L_tot = L_buf + Lx
+    if structured:
+        nx_phys = n
+        nx_buf = max(1, int(round(n * L_buf / Lx)))
+        n_tot = nx_buf + nx_phys
+        ny = max(4, int(round(n * Ly / Lx)))
+        L_tot = L_buf + Lx
 
-    mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
-    mesh.coordinates.dat.data[:, 0] -= L_buf
+        mesh = RectangleMesh(n_tot, ny, L_tot, Ly)
+        mesh.coordinates.dat.data[:, 0] -= L_buf
+    else:
+        mesh = unstructured_rectangle_mesh(-L_buf, Lx, 0.0, Ly, n, Ly_ref=Ly)
 
     eps_val = eps if eps is not None else (8.0 / n)
     buf_obstacle = BufferObstacle(L_buf=L_buf, riis_epsilon=eps_val)
-    solver = RIIS_solver(moving=False, type_obstacle="buffer", n=n, R=R_penalty, Re=mms.Re, eps=eps_val)
+    solver = RIIS_solver(moving=False, type_obstacle="buffer", n=n, R=R_penalty, Re=mms.Re, eps=eps_val, structured=structured)
 
     mesh_out, uh, ph = solver.RIIS_solve(
         mesh=mesh,
@@ -93,7 +100,7 @@ def solve_phase2_riis_buffer(n: int, mms: ManufacturedSolution, Lx: float = 4.0,
         u_exact=mms.u_exact,
         p_exact=mms.p_exact,
         g_custom=mms.g_exact,
-        u_init=mms.u_exact,
+        u_init=None,
         dt=dt,
         t_final=T_end
     )
@@ -179,6 +186,7 @@ def run_experiment_pipeline(
     R_penalty: float = 1.0e4,
     T_end: float = 5.0,
     dt: float = 0.5,
+    structured: bool = True,
     output_dir: str = "results_RIIS_buffer_recovery"
 ):
     os.makedirs(output_dir, exist_ok=True)
@@ -186,7 +194,7 @@ def run_experiment_pipeline(
 
     print("=" * 80)
     print("UPSTREAM BUFFER RECOVERY EXPERIMENT: CONFORMING vs RIIS BUFFER")
-    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e}")
+    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e} | Structured: {structured}")
     print(f"Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
     print("=" * 80)
 
@@ -198,10 +206,10 @@ def run_experiment_pipeline(
 
     # --- Loop of simulation on every resolution ---
     for n in resolutions:
-        print(f"\n---> Running Resolution n = {n} (h = {Lx/n:.4f})")
+        print(f"\n---> Running Resolution n = {n} (h = {Lx/n:.4f}, structured = {structured})")
         
         # 1. Phase 1: Conforming
-        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt)
+        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
         e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
         res_p1["L2_u"].append(e_L2_u1)
         res_p1["H1_u"].append(e_H1_u1)
@@ -209,7 +217,7 @@ def run_experiment_pipeline(
         print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.4e} | H1(u): {e_H1_u1:.4e} | L2(p): {e_L2_p1:.4e}")
 
         # 2. Phase 2: Buffer RIIS
-        uh_2, ph_2, mesh_2 = solve_phase2_riis_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt)
+        uh_2, ph_2, mesh_2 = solve_phase2_riis_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt, structured=structured)
         e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms)
         
         # Interface profile
@@ -282,5 +290,6 @@ if __name__ == "__main__":
         R_penalty=1.0e6,                # RIIS penalty term R
         T_end=10.0,                     # Final time
         dt=0.5,
+        structured=True,                # Set False for unstructured mesh
         output_dir="results_RIIS_buffer_recovery"
     )
