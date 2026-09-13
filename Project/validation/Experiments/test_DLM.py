@@ -17,8 +17,9 @@ import matplotlib.pyplot as plt
 
 # Ensure Project and related directories are in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(current_dir)
-for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+validation_dir = os.path.dirname(current_dir)
+project_dir = os.path.dirname(validation_dir)
+for p in [project_dir, validation_dir, os.path.join(project_dir, "domain_settings"),
          os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
     if p not in sys.path:
         sys.path.append(p)
@@ -36,6 +37,7 @@ from domain_settings.mesh_settings import unstructured_rectangle_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Conforming import Conforming_solver
 from Solvers.NS_DLM_simple import NS_DLM_Solver
+from validation.checkpoint_loader import load_conforming_solution, load_dlm_solution
 
 
 
@@ -47,8 +49,15 @@ def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, 
                             T_end: float = 5.0, dt: float = 0.5, structured: bool = True):
     """
     Solve the NS problem on physical domain Omega_0 = [0, Lx] x [0, Ly] using the Conforming_solver
-    with exact Dirichlet boundary conditions.
+    with exact Dirichlet boundary conditions, loading checkpoint if available.
     """
+    # 1. Check if checkpoint already exists
+    mesh_chk, uh_chk, ph_chk = load_conforming_solution(
+        obstacle_type=None, n=n, Re=mms.Re, t_final=T_end, is_mms=True
+    )
+    if mesh_chk is not None and uh_chk is not None and ph_chk is not None:
+        return uh_chk, ph_chk, mesh_chk
+
     if structured:
         ny = max(4, int(round(n * Ly / Lx)))
         mesh = RectangleMesh(n, ny, Lx, Ly)
@@ -78,8 +87,16 @@ def solve_phase2_dlm_buffer(n: int, mms: ManufacturedSolution,
                             Lx: float = 4.0, Ly: float = 1.0, L_buf: float = 1.0,
                             T_end: float = 5.0, dt: float = 0.5, structured: bool = True):
     """
-    Solves Navier-Stokes on extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver.
+    Solves Navier-Stokes on extended domain [-L_buf, Lx] x [0, Ly] using NS_DLM_Solver,
+    loading checkpoint if available.
     """
+    # 1. Check if checkpoint already exists
+    mesh_chk, uh_chk, ph_chk = load_dlm_solution(
+        obstacle_type="buffer", n=n, Re=mms.Re, t_final=T_end, is_mms=True
+    )
+    if mesh_chk is not None and uh_chk is not None and ph_chk is not None:
+        return uh_chk, ph_chk, mesh_chk
+
     nx_phys = n
     nx_buf = max(1, int(round(n * L_buf / Lx)))
     n_tot = nx_buf + nx_phys
@@ -285,13 +302,13 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[40, 80, 160],
+        resolutions=[40, 80, 120],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
-        T_end=10.0,
-        dt=0.5,
-        structured=True,               # Set False for unstructured mesh
+        T_end=30,
+        dt=0.1,
+        structured=False,               # Set False for unstructured mesh
         output_dir="results_dlm_buffer_recovery"
     )

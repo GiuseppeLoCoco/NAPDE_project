@@ -19,8 +19,9 @@ import matplotlib.pyplot as plt
 
 # Ensure Project and related directories are in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(current_dir)
-for p in [project_dir, os.path.join(project_dir, "domain_settings"),
+validation_dir = os.path.dirname(current_dir)
+project_dir = os.path.dirname(validation_dir)
+for p in [project_dir, validation_dir, os.path.join(project_dir, "domain_settings"),
          os.path.join(project_dir, "Utils"), os.path.join(project_dir, "Solvers")]:
     if p not in sys.path:
         sys.path.append(p)
@@ -38,6 +39,7 @@ from domain_settings.obstacles import BufferObstacle
 from domain_settings.mesh_settings import unstructured_rectangle_mesh
 from Utils.mms import ManufacturedSolution
 from Solvers.NS_Brinkman import Brinkman_solver
+from validation.checkpoint_loader import load_brinkman_solution
 
 
 
@@ -50,8 +52,15 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
                           T_end: float = 2.0, dt: float = 0.5, structured: bool = True) -> Tuple[object, object, object]:
     """
     Solves flow on the extended domain [-L_buf, Lx] x [0, Ly] with dynamic Brinkman resistance R_val
-    using the Brinkman_solver class.
+    using the Brinkman_solver class, loading checkpoint if available.
     """
+    # 1. Check if checkpoint already exists
+    mesh_chk, uh_chk, ph_chk = load_brinkman_solution(
+        obstacle_type="buffer", n=n, R_val=R_val, Re=mms.Re, t_final=T_end, is_mms=True
+    )
+    if mesh_chk is not None and uh_chk is not None and ph_chk is not None:
+        return uh_chk, ph_chk, mesh_chk
+
     if structured:
         nx_phys = n
         nx_buf = max(1, int(round(n * L_buf / Lx)))
@@ -65,7 +74,7 @@ def solve_brinkman_buffer(n: int, R_val: float, mms: ManufacturedSolution,
         mesh = unstructured_rectangle_mesh(-L_buf, Lx, 0.0, Ly, n, Ly_ref=Ly)
 
     buf_obstacle = BufferObstacle(L_buf=L_buf)
-    solver = Brinkman_solver(moving=False, n=n, R=R_val, Re=mms.Re, structured=structured)
+    solver = Brinkman_solver(moving=False, type_obstacle="buffer", n=n, R=R_val, Re=mms.Re, structured=structured)
 
     mesh_out, uh, ph = solver.Brinkman_solve(
         mesh=mesh,
@@ -192,7 +201,7 @@ def run_r_scaling_analysis(
         scaled_R_vals=scaled_R_vals,
         errs_L2_u=errs_L2_u,
         errs_H1_u=errs_H1_u,
-        errs_intf=errs_intf
+        errs_L2_p=errs_L2_p
     )
 
     # -------------------------------------------------------------------------
