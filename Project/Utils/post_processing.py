@@ -113,13 +113,16 @@ def create_output_folders(solver_name, params, extra_fields=None):
     else:
         path_parts.append('fixed')
 
-    if params.get('obstacle'):
+    obstacle_name = str(params.get('obstacle')).lower() if params.get('obstacle') else None
+    if obstacle_name and obstacle_name not in ["none"]:
         path_parts.append(str(params.get('obstacle')))
 
-    if params.get('symmetric') is False:
-        path_parts.append('asymmetric')
-    else:
-        path_parts.append('symmetric')
+    # Add symmetric/asymmetric only for bluff body obstacles (cylinder, square) where y_obs position matters
+    if obstacle_name in ["cylinder", "square", "circle"]:
+        if params.get('symmetric') is False:
+            path_parts.append('asymmetric')
+        else:
+            path_parts.append('symmetric')
 
     param_string = f"n{params.get('n', 'N')}"
     if 'R' in params:

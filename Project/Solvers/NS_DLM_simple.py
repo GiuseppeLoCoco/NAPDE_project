@@ -13,7 +13,7 @@ import user_inputs.user_parameters as user_parameters
 import math
 import numpy as np
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
-from domain_settings.obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
+from domain_settings.obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle, BufferObstacle
 from Solvers.Stokes_solver import solve_stokes_initial
 
 class Timer:
@@ -88,6 +88,14 @@ class NS_DLM_Solver:
         
         if obstacle is not None:
             self.obstacle = obstacle
+            if isinstance(obstacle, BufferObstacle):
+                self.type_obstacle = "buffer"
+            elif isinstance(obstacle, squareObstacle):
+                self.type_obstacle = "square"
+            elif isinstance(obstacle, circleObstacle):
+                self.type_obstacle = "cylinder"
+            elif isinstance(obstacle, (lineObstacle, rotatingLineObstacle)):
+                self.type_obstacle = "line"
 
         # Create the meshes
         if fluid_mesh is None:
@@ -203,21 +211,31 @@ class NS_DLM_Solver:
         # Create boundary conditions dictionary and setup
         FS = {'fluid': [W.sub(0), W.sub(1), Z1], 'lagrange': [Z]}
         if u_ex_val is not None:
-            bcs = [
-                DirichletBC(FS['fluid'][0], u_ex_val, 1),
-                DirichletBC(FS['fluid'][0], u_ex_val, 3),
-                DirichletBC(FS['fluid'][0], u_ex_val, 4)
-            ]
+            if self.type_obstacle == "buffer":
+                # For buffer obstacle, boundary 1 (x = -L_buf) has homogeneous Neumann (no Dirichlet condition applied)
+                bcs = [
+                    DirichletBC(FS['fluid'][0], u_ex_val, 3),
+                    DirichletBC(FS['fluid'][0], u_ex_val, 4)
+                ]
+                bcs_correction = [
+                    DirichletBC(V, u_ex_val, 3),
+                    DirichletBC(V, u_ex_val, 4)
+                ]
+            else:
+                bcs = [
+                    DirichletBC(FS['fluid'][0], u_ex_val, 1),
+                    DirichletBC(FS['fluid'][0], u_ex_val, 3),
+                    DirichletBC(FS['fluid'][0], u_ex_val, 4)
+                ]
+                bcs_correction = [
+                    DirichletBC(V, u_ex_val, 1),
+                    DirichletBC(V, u_ex_val, 3),
+                    DirichletBC(V, u_ex_val, 4)
+                ]
             if g_ex_val is None:
                 bcs.append(DirichletBC(FS['fluid'][0], u_ex_val, 2))
                 if p_ex_val is not None:
                     bcs.append(DirichletBC(FS['fluid'][1], p_ex_val, 2))
-            bcs_correction = [
-                DirichletBC(V, u_ex_val, 1),
-                DirichletBC(V, u_ex_val, 3),
-                DirichletBC(V, u_ex_val, 4)
-            ]
-            if g_ex_val is None:
                 bcs_correction.append(DirichletBC(V, u_ex_val, 2))
         else:
             bcs = create_boundary_conditions(fluid_mesh, type_obstacle=self.type_obstacle, **FS)

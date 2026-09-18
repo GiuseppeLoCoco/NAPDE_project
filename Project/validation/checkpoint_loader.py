@@ -22,19 +22,41 @@ from user_inputs.user_parameters import y_obs, Ly
 # 1. PATH RESOLUTION FUNCTIONS
 # =============================================================================
 
-# =============================================================================
-# 1. PATH RESOLUTION FUNCTIONS
-# =============================================================================
-
 def get_case_directory(solver_name: str, obstacle: Optional[str], Re: float, n: int, R_penalty: float = 1000.0, is_mms: bool = False) -> str:
     """Returns the output directory path where solver checkpoints are saved."""
+    obs_lower = str(obstacle).lower() if obstacle else ""
+    use_sym = obs_lower in ["cylinder", "square", "circle"]
     sym_str = "symmetric" if abs(y_obs - 0.5 * Ly) < 1e-6 else "asymmetric"
     param_str = f"n{n}_R{R_penalty}_Re{Re}" if solver_name.lower() in ["brinkman", "riis"] else f"n{n}_Re{Re}"
     base = os.path.join(project_dir, "Plots", "MMS", solver_name) if is_mms else os.path.join(project_dir, "Plots", solver_name)
     if obstacle:
-        return os.path.join(base, "fixed", obstacle, sym_str, param_str)
+        if use_sym:
+            return os.path.join(base, "fixed", obstacle, sym_str, param_str)
+        else:
+            return os.path.join(base, "fixed", obstacle, param_str)
     else:
-        return os.path.join(base, "fixed", sym_str, param_str)
+        return os.path.join(base, "fixed", param_str)
+
+
+def find_case_directory(solver_name: str, obstacle_type: Optional[str] = "square", n: int = 320,
+                        Re: float = 80.0, R_val: Optional[float] = None, is_mms: bool = False) -> str:
+    """
+    Finds the exact case directory on disk matching n, Re (and optionally R_val)
+    across candidate locations (symmetric/asymmetric/fixed).
+    Falls back to get_case_directory if no existing matching folder is found.
+    """
+    candidate_bases = _get_candidate_bases(solver_name, obstacle_type=obstacle_type, is_mms=is_mms)
+    for base in candidate_bases:
+        for root_dir, dirs, _ in os.walk(base):
+            for folder in dirs:
+                if folder.startswith(f"n{n}_") and (f"Re{Re}" in folder or f"Re{int(Re)}" in folder or f"Re{Re:.1f}" in folder):
+                    if R_val is not None:
+                        r_matches = [f"_R{R_val}_", f"_R{int(R_val)}_" if R_val >= 1 and R_val == int(R_val) else f"_R{R_val:.1e}_", f"_R{R_val:.1f}_"]
+                        if any(rm in folder for rm in r_matches) or f"_R{R_val}" in folder or folder.endswith(f"_R{R_val}"):
+                            return os.path.join(root_dir, folder)
+                    else:
+                        return os.path.join(root_dir, folder)
+    return get_case_directory(solver_name, obstacle_type, Re=Re, n=n, R_penalty=R_val if R_val is not None else 1000.0, is_mms=is_mms)
 
 
 def get_field_filepath(case_dir: str, field_name: str, t_val: float) -> str:
@@ -143,15 +165,16 @@ def _get_candidate_bases(solver_name: str, obstacle_type: Optional[str] = None, 
     root = os.path.join(project_dir, "Plots", "MMS" if is_mms else "", solver_name)
 
     if obstacle_type:
+        bases.append(os.path.join(root, "fixed", obstacle_type))
         bases.append(os.path.join(root, "fixed", obstacle_type, sym_str))
         bases.append(os.path.join(root, "fixed", obstacle_type, "symmetric"))
         bases.append(os.path.join(root, "fixed", obstacle_type, "asymmetric"))
 
-    # Also search directly in fixed/symmetric or fixed/asymmetric without obstacle subfolder
+    # Also search directly in fixed/ without obstacle subfolder or with sym/asym
+    bases.append(os.path.join(root, "fixed"))
     bases.append(os.path.join(root, "fixed", sym_str))
     bases.append(os.path.join(root, "fixed", "symmetric"))
     bases.append(os.path.join(root, "fixed", "asymmetric"))
-    bases.append(os.path.join(root, "fixed"))
 
     # Filter non-existing and deduplicate
     seen = set()

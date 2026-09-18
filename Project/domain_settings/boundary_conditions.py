@@ -27,6 +27,10 @@ def time_varying_bc(tt):
     t_param.assign(tt)
 
 def create_boundary_conditions(fluid_mesh, type_obstacle: str, **V):
+    if type_obstacle == "buffer":
+        bcu_walls = DirichletBC(V['fluid'][0], Constant((0.0, 0.0)), (3, 4))
+        return [bcu_walls]
+
     inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle = type_obstacle)
     # Target velocity sub-space (V['fluid'][0]) and pressure sub-space (V['fluid'][1])
     bcu_inflow = DirichletBC(V['fluid'][0], inflow_profile, 1)
@@ -37,6 +41,10 @@ def create_boundary_conditions(fluid_mesh, type_obstacle: str, **V):
     return bcs
 
 def create_boundary_conditions_correction(fluid_mesh, V, type_obstacle: str):
+    if type_obstacle == "buffer":
+        bcu_walls = DirichletBC(V, Constant((0.0, 0.0)), (3, 4))
+        return [bcu_walls]
+
     inflow_profile = get_inflow_profile(fluid_mesh.mesh, type_obstacle = type_obstacle)
     # Target velocity sub-space (V['fluid'][0]) and pressure sub-space (V['fluid'][1])
     bcu_inflow = DirichletBC(V, inflow_profile, 1)
@@ -51,6 +59,11 @@ def create_bcs_penalty(W, mesh, type_obstacle: str):
     che utilizzano una RectangleMesh standard.
     IDs: 1 (inflow), 2 (outflow), 3 (bottom wall), 4 (top wall).
     """
+    if type_obstacle == "buffer":
+        walls_ids = (3, 4)
+        bcu_walls = DirichletBC(W.sub(0), Constant((0, 0)), walls_ids)
+        return [bcu_walls]
+
     inflow_profile = get_inflow_profile(mesh, type_obstacle = type_obstacle)
 
     inflow_id = 1

@@ -13,6 +13,7 @@ Features:
 import os
 import sys
 import math
+import argparse
 import warnings
 from typing import Dict, List, Tuple, Optional
 
@@ -120,6 +121,7 @@ def run_convergence_analysis(
     Re: float,
     refinement_conforming: int,
     R_penalty: float = 1000.0,
+    eps: Optional[float] = None,
     dt: Optional[float] = None,
     t_final: float = 20.0,
     t_final_conforming: Optional[float] = None,
@@ -131,10 +133,11 @@ def run_convergence_analysis(
     """
 
     # Instantiate obstacle object
+    riis_eps = eps if eps is not None else 0.05
     if obstacle_type.lower() == "square":
-        obstacle_instance = squareObstacle(x_obs, y_obs, side_length)
+        obstacle_instance = squareObstacle(x_obs, y_obs, side_length, riis_epsilon=riis_eps)
     elif obstacle_type.lower() == "cylinder":
-        obstacle_instance = circleObstacle(x_obs, y_obs, r_obs)
+        obstacle_instance = circleObstacle(x_obs, y_obs, r_obs, riis_epsilon=riis_eps)
     else:
         raise ValueError(f"Unsupported obstacle type '{obstacle_type}'. Choose 'square' or 'cylinder'.")
 
@@ -147,8 +150,13 @@ def run_convergence_analysis(
     if dt is not None:
         print(f" Time step dt: {dt}")
     print(f" Final time t_final ({solver_type.upper()}): {t_final:.2f}s")
-    if solver_type.lower() == "brinkman":
-        print(f" Brinkman Resistance R: {R_penalty}")
+    if solver_type.lower() in ("brinkman", "riis"):
+        print(f" Resistive Parameter R (Brinkman penalty): {R_penalty}")
+    if solver_type.lower() == "riis":
+        if eps is not None:
+            print(f" RIIS Fixed Epsilon: {eps}")
+        else:
+            print(f" RIIS Epsilon: mesh-dependent (8/n)")
     print("=" * 75 + "\n")
 
     # -------------------------------------------------------------------------
@@ -224,8 +232,8 @@ def run_convergence_analysis(
                 t_final=t_final
             )
             if u_h is None:
-                print(f">> Running RIIS solver for resolution n = {n} (R = {R_penalty}, t_final = {t_final:.2f}s)...")
-                solver = RIIS_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re)
+                print(f">> Running RIIS solver for resolution n = {n} (R = {R_penalty}, eps = {eps}, t_final = {t_final:.2f}s)...")
+                solver = RIIS_solver(moving=False, type_obstacle=obstacle_type, n=n, R=R_penalty, Re=Re, eps=eps)
                 mesh_h, u_h, p_h = solver.RIIS_solve(dt=dt, t_final=t_final)
             else:
                 print(f">> Using loaded RIIS solution (n = {n}, t = {t_final:.2f}s).")
@@ -319,18 +327,19 @@ def run_convergence_analysis(
 
 if __name__ == "__main__":
     # =========================================================================
-    # EDIT CONVERGENCE STUDY PARAMETERS HERE
+    # EDIT CONVERGENCE STUDY PARAMETERS HERE DIRECTLY
     # =========================================================================
-    resolutions = [40,80,120,160]        # Mesh refinement levels n to simulate
+    resolutions = [40, 80, 120, 160]        # Mesh refinement levels n to simulate
     obstacle_type = "square"                # "square" or "cylinder" (both stationary/fixed)
-    solver_type = "Brinkman"                    # "Brinkman", "dlm", or "RIIS"
-    Re = 40.0                               # Reynolds number (can be ANY float/int, e.g. 40, 80, 100, 200...)
+    solver_type = "Brinkman"                    # "RIIS", "Brinkman", or "dlm"
+    Re = 40.0                               # Reynolds number (e.g. 40, 80, 100...)
     refinement_conforming = 320             # Exact conforming reference mesh refinement
-    R_penalty = 10000.0                    # Resistive parameter R (for Brinkman / RIIS solver)
-    dt = 0.5                                # Time step size dt (can be None to use solver default)
-    t_final = 40                    # Final simulation time step t_final for DLM / Brinkman / RIIS
-    t_final_conforming = 40               # Reference Conforming time (can be different from t_final, e.g. 20.0 if already stationary)
-    structured_conforming = True           # Use structured (Cartesian transfinite) conforming mesh for square
+    R_penalty = 1000000.0                     # Fixed Brinkman resistive parameter R (for Brinkman / RIIS)
+    eps_RIIS = 0.05                         # Fixed interface thickness epsilon for RIIS (not dependent on n)
+    dt = 0.1                                # Time step size dt
+    t_final = 20.0                          # Final simulation time step t_final
+    t_final_conforming = 20               # Reference Conforming time
+    structured_conforming = True            # Use structured (Cartesian transfinite) conforming mesh for square
     # =========================================================================
 
     run_convergence_analysis(
@@ -340,6 +349,7 @@ if __name__ == "__main__":
         Re=Re,
         refinement_conforming=refinement_conforming,
         R_penalty=R_penalty,
+        eps=eps_RIIS,
         dt=dt,
         t_final=t_final,
         t_final_conforming=t_final_conforming,

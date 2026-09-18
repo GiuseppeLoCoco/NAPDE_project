@@ -50,7 +50,7 @@ from domain_settings.mesh_settings import conforming_mesh
 from Solvers.NS_Brinkman import Brinkman_solver
 from Solvers.NS_Conforming import Conforming_solver
 from validation.checkpoint_loader import (
-    get_case_directory, get_field_filepath, load_hdf5_solution,
+    get_case_directory, find_case_directory, get_field_filepath, load_hdf5_solution,
     load_conforming_solution, load_brinkman_solution, extract_probe_history
 )
 from validation.validation_plots import (
@@ -65,11 +65,11 @@ from validation.validation_plots import (
 # EXPERIMENT 1: STEADY STATE CONVERGENCE & TABLE 1 (Re = 40)
 # =============================================================================
 
-def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=None):
+def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=40.0, output_dir=None):
     """
     Reproduces Section 6.1 (Steady case at Re = 40):
-    - Solves conforming reference using Conforming_solver.
-    - Solves penalized solutions using Brinkman_solver for each eta in eta_list (R = 1/eta).
+    - Solves conforming reference using Conforming_solver (or loads checkpoint).
+    - Solves penalized solutions using Brinkman_solver for each eta in eta_list (R = 1/eta) (or loads checkpoint).
     - Computes ||u_eta||_L2(Omega_s) and ||u_eta - u_ref||_L2(Omega_f).
     - Measures convergence rates alpha for O(eta^alpha) (Table 1).
     - Generates Fig. 3 plots (pressure and vorticity fields).
@@ -101,6 +101,8 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
             dt=dt,
             t_final=T_end
         )
+    else:
+        print(f"\n--- Reusing loaded Conforming Reference Solution (n={n}, Re={Re}, t={T_end:.2f}s) ---")
 
     results = []
 
@@ -116,19 +118,21 @@ def run_steady_experiment(eta_list=None, n=320, dt=0.05, T_end=10.0, output_dir=
                 dt=dt,
                 t_final=T_end
             )
+        else:
+            print(f"--- Reusing loaded Brinkman checkpoint for eta = {eta:.1e} (R = {R_val:.1e}) ---")
 
         chi_s = obs.chi(p_mesh, Constant(0.0))
-        chi_f = 1.0 - chi_s
 
         # L2 error norm inside solid Omega_s: ||u_eta||_L2(Omega_s)
-        err_solid_sq = assemble(chi_s * inner(uh, uh) * dx)
+        err_solid_sq = assemble(chi_s * inner(uh, uh) * dx(domain=p_mesh))
         err_solid = math.sqrt(err_solid_sq)
 
         # L2 error norm in fluid domain Omega_f: ||u_eta - u_ref||_L2(Omega_f)
-        V_p = uh.function_space()
-        u_ref_proj = project(u_ref, V_p)
-        err_fluid_vec = uh - u_ref_proj
-        err_fluid_sq = assemble(chi_f * inner(err_fluid_vec, err_fluid_vec) * dx)
+        # Project uh (defined on full domain) onto conforming reference function space (Omega_f)
+        V_ref = u_ref.function_space()
+        uh_proj = project(uh, V_ref)
+        err_fluid_vec = uh_proj - u_ref
+        err_fluid_sq = assemble(inner(err_fluid_vec, err_fluid_vec) * dx(domain=ref_mesh))
         err_fluid = math.sqrt(err_fluid_sq)
 
         results.append({
@@ -222,11 +226,11 @@ def compute_strouhal_number(time_array, signal_array, D=0.2, U_mean=1.0):
     return dominant_freq, strouhal
 
 
-def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_dir=None):
+def run_unsteady_experiment(eta_list=None, n=320, T_end=15.0, dt=0.05, output_dir=None):
     """
     Reproduces Section 6.1 (Unsteady case at Re = 80, Table 2 & Figs. 4-5):
-    - Solves unsteady vortex shedding with Conforming_solver (reference).
-    - Solves with Brinkman_solver for each eta (R = 1/eta).
+    - Solves unsteady vortex shedding with Conforming_solver (reference) or loads checkpoint.
+    - Solves with Brinkman_solver for each eta (R = 1/eta) or loads checkpoint.
     - Computes shedding frequency f, period T, and Strouhal number St = f*D/U.
     - Generates 3 validation plots: Strouhal & Signal comparison, Pressure, and Vorticity street (von Kármán).
     """
@@ -237,10 +241,10 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
         output_dir = os.path.join(project_dir, "Plots", "Validation", "L2_unsteady_Re80")
     os.makedirs(output_dir, exist_ok=True)
 
-    Re = 200.0
+    Re = 80.0
     D = side_length
     U_mean = 1.0
-    probe_pt = (1.5, 0.5)
+    probe_pt = (x_obs + 1.0, y_obs)
 
     print("\n" + "="*80)
     print(f" EXPERIMENT 2: UNSTEADY VORTEX SHEDDING AT Re = {Re} (TABLE 2)")
@@ -258,9 +262,11 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
             dt=dt,
             t_final=T_end
         )
+    else:
+        print(f"\n--- Reusing loaded Conforming Reference Solution (n={n}, Re={Re}, t={T_end:.2f}s) ---")
 
     # Extract Conforming Reference probe signal & Strouhal number
-    conf_dir = get_case_directory("Conforming", "square", Re=Re, n=n)
+    conf_dir = find_case_directory("Conforming", obstacle_type="square", Re=Re, n=n)
     t_ref, ux_ref, uy_ref = extract_probe_history(conf_dir, probe_pt=probe_pt)
     f_ref, St_ref = compute_strouhal_number(t_ref, uy_ref, D=D, U_mean=U_mean)
     T_ref = (1.0 / f_ref) if f_ref > 0 else 0.0
@@ -290,23 +296,24 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=25.0, dt=0.05, output_di
                 dt=dt,
                 t_final=T_end
             )
+        else:
+            print(f"--- Reusing loaded Brinkman checkpoint for eta = {eta:.1e} (R = {R_val:.1e}) ---")
 
         chi_s = obs.chi(p_mesh, Constant(0.0))
-        chi_f = 1.0 - chi_s
 
         # L2 error norm inside solid Omega_s: ||u_eta||_L2(Omega_s)
-        err_solid_sq = assemble(chi_s * inner(uh, uh) * dx)
+        err_solid_sq = assemble(chi_s * inner(uh, uh) * dx(domain=p_mesh))
         err_solid = math.sqrt(err_solid_sq)
 
         # L2 error norm in fluid domain Omega_f: ||u_eta - u_ref||_L2(Omega_f)
-        V_p = uh.function_space()
-        u_ref_proj = project(u_ref, V_p)
-        err_fluid_vec = uh - u_ref_proj
-        err_fluid_sq = assemble(chi_f * inner(err_fluid_vec, err_fluid_vec) * dx)
+        V_ref = u_ref.function_space()
+        uh_proj = project(uh, V_ref)
+        err_fluid_vec = uh_proj - u_ref
+        err_fluid_sq = assemble(inner(err_fluid_vec, err_fluid_vec) * dx(domain=ref_mesh))
         err_fluid = math.sqrt(err_fluid_sq)
 
         # Extract Brinkman probe signal & Strouhal number
-        brink_dir = get_case_directory("Brinkman", "square", Re=Re, n=n, R_penalty=R_val)
+        brink_dir = find_case_directory("Brinkman", obstacle_type="square", Re=Re, n=n, R_val=R_val)
         t_pen, ux_pen, uy_pen = extract_probe_history(brink_dir, probe_pt=probe_pt)
         f_pen, St_pen = compute_strouhal_number(t_pen, uy_pen, D=D, U_mean=U_mean)
         T_pen = (1.0 / f_pen) if f_pen > 0 else 0.0
@@ -372,7 +379,7 @@ if __name__ == "__main__":
     # PARAMETRI MODIFICABILI DIRETTAMENTE DA CODICE
     # =========================================================================
     # Modalità di test: "steady" (Re=40), "unsteady" (Re=80), o "all"
-    mode = "unsteady"
+    mode = "steady"
 
     # Risoluzione mesh (es. n=320 per benchmark finale, n=80 per test veloci)
     n = 320
@@ -381,8 +388,8 @@ if __name__ == "__main__":
     dt = 0.2
 
     # Tempo finale di simulazione
-    T_end_steady = 40.0
-    T_end_unsteady =15.0
+    T_end_steady = 20.0
+    T_end_unsteady =20.0
 
     # Lista di valori di eta (permeabilità = 1/R) da testare
     eta_list_steady = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]

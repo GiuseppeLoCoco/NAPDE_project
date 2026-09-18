@@ -302,13 +302,13 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[40, 80, 120],
+        resolutions=[40, 80, 120,160],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
         T_end=30,
-        dt=0.1,
+        dt=0.5,
         structured=False,               # Set False for unstructured mesh
         output_dir="results_dlm_buffer_recovery"
     )

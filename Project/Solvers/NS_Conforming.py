@@ -262,7 +262,9 @@ if __name__ == '__main__':
     parser.add_argument('--obstacle', type=str, default='cylinder',
                         choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
+    parser.add_argument('--dt', type=float, default=0.1, help='Time step size (default: 0.1)')
+    parser.add_argument('--t_final', type=float, default=5.0, help='Final simulation time (default: 5.0)')
     args = parser.parse_args()
     
     solver = Conforming_solver(moving=args.moving, type_obstacle=args.obstacle)
-    solver.conforming_solve()
+    solver.conforming_solve(dt=args.dt, t_final=args.t_final)

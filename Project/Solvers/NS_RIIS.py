@@ -12,7 +12,7 @@ from math import cos, pi as PI
 from user_inputs import *
 import user_inputs.user_parameters as user_parameters
 from domain_settings import create_bcs_penalty, time_varying_bc
-from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle
+from obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle, BufferObstacle
 from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
 from Solvers.Stokes_solver import solve_stokes_initial
 
@@ -44,6 +44,14 @@ class RIIS_solver:
             self.obstacle = obstacle
             if hasattr(self.obstacle, 'eps'):
                 self.obstacle.eps = eps_val
+            if isinstance(obstacle, BufferObstacle):
+                self.type_obstacle = "buffer"
+            elif isinstance(obstacle, squareObstacle):
+                self.type_obstacle = "square"
+            elif isinstance(obstacle, circleObstacle):
+                self.type_obstacle = "cylinder"
+            elif isinstance(obstacle, (lineObstacle, rotatingLineObstacle)):
+                self.type_obstacle = "line"
         else:
             if self.type_obstacle not in ["line", "rotating", "rotating_line"]:
                 if self.type_obstacle == "cylinder":
@@ -117,11 +125,18 @@ class RIIS_solver:
 
         # Define boundary conditions
         if u_ex_val is not None:
-            bcs = [
-                DirichletBC(W.sub(0), u_ex_val, 1),
-                DirichletBC(W.sub(0), u_ex_val, 3),
-                DirichletBC(W.sub(0), u_ex_val, 4)
-            ]
+            if self.type_obstacle == "buffer":
+                # For buffer obstacle, boundary 1 (x = -L_buf) has homogeneous Neumann (no Dirichlet condition applied)
+                bcs = [
+                    DirichletBC(W.sub(0), u_ex_val, 3),
+                    DirichletBC(W.sub(0), u_ex_val, 4)
+                ]
+            else:
+                bcs = [
+                    DirichletBC(W.sub(0), u_ex_val, 1),
+                    DirichletBC(W.sub(0), u_ex_val, 3),
+                    DirichletBC(W.sub(0), u_ex_val, 4)
+                ]
             if g_ex_val is None:
                 bcs.append(DirichletBC(W.sub(0), u_ex_val, 2))
                 if p_ex_val is not None:
