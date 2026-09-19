@@ -125,11 +125,16 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=FutureWarning)
         for i, y_val in enumerate(y_coords):
+            pt = [0.0, y_val]
             try:
-                val = uh.at([0.0, y_val], tolerance=1e-5)
+                val = uh.at(pt, tolerance=1e-4)
                 u_num_x[i] = val[0]
             except Exception:
-                u_num_x[i] = 0.0
+                try:
+                    val = uh.at([1e-6, y_val], tolerance=1e-4)
+                    u_num_x[i] = val[0]
+                except Exception:
+                    u_num_x[i] = 0.0
             u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
@@ -201,7 +206,8 @@ def run_r_scaling_analysis(
         scaled_R_vals=scaled_R_vals,
         errs_L2_u=errs_L2_u,
         errs_H1_u=errs_H1_u,
-        errs_L2_p=errs_L2_p
+        errs_L2_p=errs_L2_p,
+        errs_intf=errs_intf
     )
 
     # -------------------------------------------------------------------------
@@ -238,13 +244,13 @@ def run_r_scaling_analysis(
 if __name__ == "__main__":
     run_r_scaling_analysis(
         resolutions=[40,80,120],
-        R_base=1.0e3,
+        R_base=1.0e6,
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
         T_end=10.0,
         dt=0.5,
-        structured=True,               # Set False for unstructured mesh
+        structured=False,               # Set False for unstructured mesh
         output_dir="results_buffer_recovery_v3"
     )

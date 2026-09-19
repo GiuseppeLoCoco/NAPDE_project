@@ -184,11 +184,16 @@ def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 1
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=FutureWarning)
         for i, y_val in enumerate(y_coords):
+            pt = [0.0, y_val]
             try:
-                val = uh.at([0.0, y_val], tolerance=1e-5)
+                val = uh.at(pt, tolerance=1e-4)
                 u_num_x[i] = val[0]
             except Exception:
-                u_num_x[i] = 0.0
+                try:
+                    val = uh.at([1e-6, y_val], tolerance=1e-4)
+                    u_num_x[i] = val[0]
+                except Exception:
+                    u_num_x[i] = 0.0
             u_exact_x[i] = 1.0 + math.sin(0.0) * math.sin(2.0 * math.pi * y_val / mms.Ly)
 
     return y_coords, u_num_x, u_exact_x
@@ -218,7 +223,7 @@ def run_dlm_experiment_pipeline(
     print(f"Mesh Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
     print("=" * 90)
 
-    res_p1 = {"L2_u": [], "H1_u": [], "L2_p": []}
+    res_p1 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
     res_p2 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
     
     profiles_p2: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
@@ -230,10 +235,13 @@ def run_dlm_experiment_pipeline(
         # 1. Phase 1: Conforming Benchmark
         uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
         e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
+        y_pts_1, u_num_x1, u_ex_x1 = extract_interface_profile(uh_1, mms)
+        e_interf_L2_1 = float(np.sqrt(_trapezoid((u_num_x1 - u_ex_x1)**2, y_pts_1)))
         res_p1["L2_u"].append(e_L2_u1)
         res_p1["H1_u"].append(e_H1_u1)
         res_p1["L2_p"].append(e_L2_p1)
-        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e}")
+        res_p1["interf_L2"].append(e_interf_L2_1)
+        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e} | Intf_L2(x=0): {e_interf_L2_1:.5e}")
 
         # 2. Phase 2: DLM Buffer Recovery
         uh_2, ph_2, mesh_2 = solve_phase2_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt, structured=structured)
@@ -302,7 +310,7 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[40, 80, 120,160],
+        resolutions=[40, 80, 120],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,

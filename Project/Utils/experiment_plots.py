@@ -40,39 +40,76 @@ def print_phase_comparison_tables(
 ):
     """
     Prints formatted convergence tables comparing Phase 1 (Conforming) and Phase 2 (Buffer recovery),
-    including velocity L2, H1 and pressure L2 convergence rates.
+    including velocity L2, H1, pressure L2 and interface L2 convergence rates.
     """
     rates_p1_L2 = compute_convergence_rates(res_p1["L2_u"], h_vals)
     rates_p1_H1 = compute_convergence_rates(res_p1["H1_u"], h_vals)
     rates_p1_p  = compute_convergence_rates(res_p1["L2_p"], h_vals) if ("L2_p" in res_p1 and len(res_p1["L2_p"]) == len(h_vals)) else []
+    rates_p1_intf = compute_convergence_rates(res_p1["interf_L2"], h_vals) if ("interf_L2" in res_p1 and len(res_p1["interf_L2"]) == len(h_vals)) else []
 
     rates_p2_L2 = compute_convergence_rates(res_p2["L2_u"], h_vals)
     rates_p2_H1 = compute_convergence_rates(res_p2["H1_u"], h_vals)
     rates_p2_p  = compute_convergence_rates(res_p2["L2_p"], h_vals) if ("L2_p" in res_p2 and len(res_p2["L2_p"]) == len(h_vals)) else []
+    rates_p2_intf = compute_convergence_rates(res_p2["interf_L2"], h_vals) if ("interf_L2" in res_p2 and len(res_p2["interf_L2"]) == len(h_vals)) else []
 
-    print("\n" + "=" * 105)
-    print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
-    print("-" * 105)
-    for i, n in enumerate(resolutions):
-        r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p1_L2) >= i) else "   -- "
-        r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p1_H1) >= i) else "   -- "
-        r_p  = f"{rates_p1_p[i-1]:+5.2f}" if (i > 0 and len(rates_p1_p) >= i) else "   -- "
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e} | {r_p}")
+    has_intf_p1 = "interf_L2" in res_p1 and len(res_p1["interf_L2"]) == len(h_vals)
+    has_intf_p2 = "interf_L2" in res_p2 and len(res_p2["interf_L2"]) == len(h_vals)
 
-    print("\n" + "=" * 105)
-    print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
-    print("=" * 105)
-    print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
-    print("-" * 105)
-    for i, n in enumerate(resolutions):
-        r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p2_L2) >= i) else "   -- "
-        r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p2_H1) >= i) else "   -- "
-        r_p  = f"{rates_p2_p[i-1]:+5.2f}" if (i > 0 and len(rates_p2_p) >= i) else "   -- "
-        p_val = res_p2['L2_p'][i] if ('L2_p' in res_p2 and len(res_p2['L2_p']) > i) else 0.0
-        print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {p_val:14.5e} | {r_p}")
-    print("=" * 105 + "\n")
+    # --- Table 1: Phase 1 Conforming ---
+    if has_intf_p1:
+        print("\n" + "=" * 128)
+        print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6} | {'Intf L2 Error':>14} | {'Rate':>6}")
+        print("-" * 128)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p1_L2) >= i) else "   -- "
+            r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p1_H1) >= i) else "   -- "
+            r_p  = f"{rates_p1_p[i-1]:+5.2f}" if (i > 0 and len(rates_p1_p) >= i) else "   -- "
+            r_intf = f"{rates_p1_intf[i-1]:+5.2f}" if (i > 0 and len(rates_p1_intf) >= i) else "   -- "
+            intf_val = res_p1['interf_L2'][i]
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e} | {r_p} | {intf_val:14.5e} | {r_intf}")
+    else:
+        print("\n" + "=" * 105)
+        print("Table 1: Phase 1 - BENCHMARK CONFORMING (Omega_0)")
+        print("=" * 105)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
+        print("-" * 105)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p1_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p1_L2) >= i) else "   -- "
+            r_h1 = f"{rates_p1_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p1_H1) >= i) else "   -- "
+            r_p  = f"{rates_p1_p[i-1]:+5.2f}" if (i > 0 and len(rates_p1_p) >= i) else "   -- "
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p1['L2_u'][i]:14.5e} | {r_l2} | {res_p1['H1_u'][i]:14.5e} | {r_h1} | {res_p1['L2_p'][i]:14.5e} | {r_p}")
+
+    # --- Table 2: Phase 2 Buffer Recovery ---
+    if has_intf_p2:
+        print("\n" + "=" * 128)
+        print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6} | {'Intf L2 Error':>14} | {'Rate':>6}")
+        print("-" * 128)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p2_L2) >= i) else "   -- "
+            r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p2_H1) >= i) else "   -- "
+            r_p  = f"{rates_p2_p[i-1]:+5.2f}" if (i > 0 and len(rates_p2_p) >= i) else "   -- "
+            r_intf = f"{rates_p2_intf[i-1]:+5.2f}" if (i > 0 and len(rates_p2_intf) >= i) else "   -- "
+            p_val = res_p2['L2_p'][i] if ('L2_p' in res_p2 and len(res_p2['L2_p']) > i) else 0.0
+            intf_val = res_p2['interf_L2'][i]
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {p_val:14.5e} | {r_p} | {intf_val:14.5e} | {r_intf}")
+        print("=" * 128 + "\n")
+    else:
+        print("\n" + "=" * 105)
+        print(f"Table 2: Phase 2 - UPSTREAM BUFFER RECOVERY VIA {method_name.upper()} (Restricted to Omega_0)")
+        print("=" * 105)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Error':>14} | {'Rate':>6} | {'H1(u) Error':>14} | {'Rate':>6} | {'L2(p) Error':>14} | {'Rate':>6}")
+        print("-" * 105)
+        for i, n in enumerate(resolutions):
+            r_l2 = f"{rates_p2_L2[i-1]:+5.2f}" if (i > 0 and len(rates_p2_L2) >= i) else "   -- "
+            r_h1 = f"{rates_p2_H1[i-1]:+5.2f}" if (i > 0 and len(rates_p2_H1) >= i) else "   -- "
+            r_p  = f"{rates_p2_p[i-1]:+5.2f}" if (i > 0 and len(rates_p2_p) >= i) else "   -- "
+            p_val = res_p2['L2_p'][i] if ('L2_p' in res_p2 and len(res_p2['L2_p']) > i) else 0.0
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {res_p2['L2_u'][i]:14.5e} | {r_l2} | {res_p2['H1_u'][i]:14.5e} | {r_h1} | {p_val:14.5e} | {r_p}")
+        print("=" * 105 + "\n")
 
 
 def print_spatial_convergence_table(
@@ -81,16 +118,34 @@ def print_spatial_convergence_table(
     errs_L2_u: List[float],
     errs_H1_u: List[float],
     method_name: str,
-    errs_L2_p: Optional[List[float]] = None
+    errs_L2_p: Optional[List[float]] = None,
+    errs_intf: Optional[List[float]] = None
 ):
     """
-    Prints a single method convergence summary table with rates for L2, H1 and L2(p).
+    Prints a single method convergence summary table with rates for L2, H1, L2(p), and interface L2.
     """
     rates_L2 = compute_convergence_rates(errs_L2_u, h_vals)
     rates_H1 = compute_convergence_rates(errs_H1_u, h_vals)
     rates_p = compute_convergence_rates(errs_L2_p, h_vals) if (errs_L2_p is not None and len(errs_L2_p) == len(h_vals)) else []
+    rates_intf = compute_convergence_rates(errs_intf, h_vals) if (errs_intf is not None and len(errs_intf) == len(h_vals)) else []
 
-    if errs_L2_p is not None:
+    has_p = errs_L2_p is not None
+    has_intf = errs_intf is not None
+
+    if has_p and has_intf:
+        print("\n" + "=" * 128)
+        print(f"CONVERGENCE SUMMARY TABLE: {method_name.upper()} BUFFER RECOVERY")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'L2(u) Err':>14} | {'Rate':>6} | {'H1(u) Err':>14} | {'Rate':>6} | {'L2(p) Err':>14} | {'Rate':>6} | {'Intf L2 Err':>14} | {'Rate':>6}")
+        print("-" * 128)
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            r_p_str = f"{rates_p[i-1]:+6.2f}" if (i > 0 and len(rates_p) >= i) else "    --"
+            r_intf_str = f"{rates_intf[i-1]:+6.2f}" if (i > 0 and len(rates_intf) >= i) else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {errs_L2_u[i]:14.5e} | {r_l2_str} | {errs_H1_u[i]:14.5e} | {r_h1_str} | {errs_L2_p[i]:14.5e} | {r_p_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
+        print("=" * 128 + "\n")
+    elif has_p:
         print("\n" + "=" * 105)
         print(f"CONVERGENCE SUMMARY TABLE: {method_name.upper()} BUFFER RECOVERY")
         print("=" * 105)
@@ -144,7 +199,8 @@ def print_strategy_b_table(
     scaled_R_vals: List[float],
     errs_L2_u: List[float],
     errs_H1_u: List[float],
-    errs_L2_p: Optional[List[float]] = None
+    errs_L2_p: Optional[List[float]] = None,
+    errs_intf: Optional[List[float]] = None
 ):
     """
     Prints Strategy B summary table: Spatial convergence with balanced penalty scaling R(h).
@@ -152,8 +208,25 @@ def print_strategy_b_table(
     rates_L2 = compute_convergence_rates(errs_L2_u, h_vals)
     rates_H1 = compute_convergence_rates(errs_H1_u, h_vals)
     rates_p = compute_convergence_rates(errs_L2_p, h_vals) if (errs_L2_p is not None and len(errs_L2_p) == len(h_vals)) else []
+    rates_intf = compute_convergence_rates(errs_intf, h_vals) if (errs_intf is not None and len(errs_intf) == len(h_vals)) else []
 
-    if errs_L2_p is not None:
+    has_p = errs_L2_p is not None
+    has_intf = errs_intf is not None
+
+    if has_p and has_intf:
+        print("\n" + "=" * 128)
+        print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
+        print("=" * 128)
+        print(f"{'n':>5} | {'h':>8} | {'Scaled R':>12} | {'L2(u) Err':>14} | {'Rate':>6} | {'H1(u) Err':>14} | {'Rate':>6} | {'L2(p) Err':>14} | {'Rate':>6} | {'Intf L2 Err':>14} | {'Rate':>6}")
+        print("-" * 128)
+        for i, n in enumerate(resolutions):
+            r_l2_str = f"{rates_L2[i-1]:+6.2f}" if i > 0 else "    --"
+            r_h1_str = f"{rates_H1[i-1]:+6.2f}" if i > 0 else "    --"
+            r_p_str = f"{rates_p[i-1]:+6.2f}" if (i > 0 and len(rates_p) >= i) else "    --"
+            r_intf_str = f"{rates_intf[i-1]:+6.2f}" if (i > 0 and len(rates_intf) >= i) else "    --"
+            print(f"{n:5d} | {h_vals[i]:8.4f} | {scaled_R_vals[i]:12.2e} | {errs_L2_u[i]:14.5e} | {r_l2_str} | {errs_H1_u[i]:14.5e} | {r_h1_str} | {errs_L2_p[i]:14.5e} | {r_p_str} | {errs_intf[i]:14.5e} | {r_intf_str}")
+        print("=" * 128 + "\n")
+    elif has_p:
         print("\n" + "=" * 105)
         print("CONVERGENCE SUMMARY TABLE: SPATIAL CONVERGENCE WITH SCALED BRINKMAN PENALTY R(h)")
         print("=" * 105)
@@ -194,14 +267,16 @@ def plot_phase_comparison_loglog(
     All error curves are normalized by their value at the coarsest mesh (n_min, h_0) to clearly display and compare slopes:
     - P2 Velocity: Optimal O(h^3) in L2 norm, Optimal O(h^2) in H1 norm
     - P1 Pressure: Optimal O(h^2) in L2 norm
+    - Interface Trace L2: Reference O(h^2) and O(h)
     """
     h_arr = np.array(h_vals)
     h0 = h_arr[0]
     has_p = ("L2_p" in res_p1 and len(res_p1["L2_p"]) == len(h_vals) and
              "L2_p" in res_p2 and len(res_p2["L2_p"]) == len(h_vals))
+    has_intf = ("interf_L2" in res_p2 and len(res_p2["interf_L2"]) == len(h_vals))
 
-    ncols = 3 if has_p else 2
-    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 5.5))
+    ncols = 2 + (1 if has_p else 0) + (1 if has_intf else 0)
+    fig, axes = plt.subplots(1, ncols, figsize=(5.5 * ncols, 5.0))
     fig.suptitle(f"Normalized Spatial Convergence: Pure Conforming vs {method_name} Buffer Recovery", fontsize=13, fontweight='bold')
 
     ax1 = axes[0]
@@ -233,9 +308,10 @@ def plot_phase_comparison_loglog(
     ax2.grid(True, which="both", linestyle="--", alpha=0.5)
     ax2.legend(fontsize=9)
 
+    ax_idx = 2
     # Subplot 3: Normalized L2 Pressure (P1 -> O(h^2))
     if has_p:
-        ax3 = axes[2]
+        ax3 = axes[ax_idx]
         norm_p1_p = np.array(res_p1["L2_p"]) / res_p1["L2_p"][0]
         norm_p2_p = np.array(res_p2["L2_p"]) / res_p2["L2_p"][0]
         ax3.loglog(h_arr, norm_p1_p, 'o-', color='#1f77b4', linewidth=2, label=r'Phase 1: Conforming $L^2(p)$')
@@ -247,6 +323,23 @@ def plot_phase_comparison_loglog(
         ax3.set_title(r"Pressure $L^2$ Convergence (Slope $O(h^2)$)", fontsize=12, fontweight='bold')
         ax3.grid(True, which="both", linestyle="--", alpha=0.5)
         ax3.legend(fontsize=9)
+        ax_idx += 1
+
+    # Subplot 4: Interface Trace L2 Convergence (x = 0)
+    if has_intf:
+        ax4 = axes[ax_idx]
+        norm_p2_intf = np.array(res_p2["interf_L2"]) / res_p2["interf_L2"][0]
+        if "interf_L2" in res_p1 and len(res_p1["interf_L2"]) == len(h_vals) and res_p1["interf_L2"][0] > 1e-15:
+            norm_p1_intf = np.array(res_p1["interf_L2"]) / res_p1["interf_L2"][0]
+            ax4.loglog(h_arr, norm_p1_intf, 'o-', color='#1f77b4', linewidth=2, label=r'Phase 1: Conforming $L^2(\Sigma)$')
+        ax4.loglog(h_arr, norm_p2_intf, 's--', color='#d62728', linewidth=2, label=f'Phase 2: {method_name} $L^2(\\Sigma)$')
+        ax4.loglog(h_arr, (h_arr / h0)**2, 'k:', alpha=0.6, label=r'Reference $O(h^2)$')
+        ax4.loglog(h_arr, (h_arr / h0)**1, 'k--', alpha=0.6, label=r'Reference $O(h)$')
+        ax4.set_xlabel(r"Mesh Size $h = L_x/n$", fontsize=11)
+        ax4.set_ylabel(r"Normalized Error $E(h)/E(h_0)$", fontsize=11)
+        ax4.set_title(r"Interface $L^2(\Sigma)$ Convergence", fontsize=12, fontweight='bold')
+        ax4.grid(True, which="both", linestyle="--", alpha=0.5)
+        ax4.legend(fontsize=9)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
