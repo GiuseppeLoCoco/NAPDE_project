@@ -5,8 +5,8 @@
 This repository contains a comprehensive finite element framework for simulating fluid flows around static and moving obstacles using **immersed boundary and fictitious domain methods** without body-fitted remeshing, implemented in [Firedrake](https://www.firedrakeproject.org/).
 
 The project benchmarks and compares three immersed approaches against standard conforming (body-fitted) Navier-Stokes solutions:
-1. **$L^2$ Brinkman Volume Penalization** (`NS_Brinkman.py`)
-2. **Regularized Immersed Interface Solver (RIIS)** (`NS_RIIS.py`)
+1. **Brinkman Volume Penalization** (`NS_Brinkman.py`)
+2. **Resistive Immersed Implicit Surface (RIIS)** (`NS_RIIS.py`)
 3. **Distributed Lagrange Multiplier / Fictitious Domain (DLM/FD)** (`NS_DLM_simple.py`)
 4. **Body-Fitted Conforming Solver** (`NS_Conforming.py`) — reference baseline
 
