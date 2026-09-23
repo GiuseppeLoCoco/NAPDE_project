@@ -12,7 +12,10 @@ from user_inputs import *
 import user_inputs.user_parameters as user_parameters
 import math
 import numpy as np
-from post_processing import save_VTK, save_checkpoint, plot_results, create_output_folders
+from post_processing import (
+    save_VTK, save_checkpoint, plot_results, create_output_folders,
+    find_latest_checkpoint, load_checkpoint_solution, setup_pvd_resume, _safe_load_mesh
+)
 from domain_settings.obstacles import circleObstacle, squareObstacle, lineObstacle, rotatingLineObstacle, BufferObstacle
 from Solvers.Stokes_solver import solve_stokes_initial
 
@@ -31,7 +34,7 @@ timer_total = Timer()
 
 class NS_DLM_Solver:
 
-    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None, structured=True):  
+    def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None, structured=True, print_iteration_time=None):  
 
         self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
         self.mean = True
@@ -40,6 +43,7 @@ class NS_DLM_Solver:
         self.Re = Re if Re is not None else getattr(user_parameters, 'Re', 40.0)
         self.structured = structured
         self.symmetric = abs(y_obs - 0.5 * Ly) < 1e-6
+        self.print_iteration_time = print_iteration_time if print_iteration_time is not None else getattr(solver_options, 'print_iteration_time', True)
 
         # Initialize the obstacle based on the type chosen
         if self.type_obstacle == "cylinder":
@@ -79,7 +83,13 @@ class NS_DLM_Solver:
             raise ValueError(f"Type of obstacle not supported: {self.type_obstacle}")
 
 
-    def NS_DLM_Solve(self, args=None, fluid_mesh=None, solid_mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None):
+    def NS_DLM_Solve(self, args=None, fluid_mesh=None, solid_mesh=None, obstacle=None, f_custom=None, u_exact=None, p_exact=None, g_custom=None, u_init=None, dt=None, t_final=None, print_iteration_time=None, resume=None):
+
+        if print_iteration_time is not None:
+            self.print_iteration_time = print_iteration_time
+
+        if resume is None:
+            resume = getattr(solver_options, 'resume_simulation', True)
 
         # Start the timer for the simulation
         timer_total.start()
@@ -296,29 +306,85 @@ class NS_DLM_Solver:
         }
         basedir, file_dict = create_output_folders('DLM', params)
 
+        # ----------------------------------
+        # Checkpoint Discovery & Resume
+        # ----------------------------------
+        resuming = False
+        start_step = 0
+        latest_t = None
+
+        if resume:
+            latest_t, vel_file, press_file, _ = find_latest_checkpoint(basedir)
+            if latest_t is not None:
+                if latest_t >= T_end - 1e-9:
+                    print(f"\n--- DLM simulation already completed up to t = {latest_t:.2f}s (target T_end = {T_end:.2f}s) in {basedir} ---", flush=True)
+                    load_checkpoint_solution(vel_file, press_file, target_u=uh_n, target_p=ph)
+                    return fluid_mesh.mesh, uh_n, ph
+                else:
+                    print(f"\n--- Resuming DLM simulation from t = {latest_t:.2f}s up to T_end = {T_end:.2f}s (found checkpoint in {basedir}) ---", flush=True)
+                    load_checkpoint_solution(vel_file, press_file, target_u=uh_n, target_p=ph)
+                    uh.assign(uh_n)
+                    resuming = True
+                    setup_pvd_resume(basedir, file_dict, latest_t)
+
+                    # Restore Lagrange multiplier if saved in checkpoint
+                    lagrange_file = os.path.join(basedir, 'lagrange', f'lagrange_t={latest_t:.2f}.h5')
+                    if os.path.exists(lagrange_file):
+                        try:
+                            with CheckpointFile(lagrange_file, 'r') as chk_l:
+                                mesh_l = _safe_load_mesh(chk_l)
+                                lm_chk = chk_l.load_function(mesh_l, name="lagrange")
+                            Lm_[0].dat.data[:] = lm_chk.dat.data_ro[:]
+                        except Exception as e:
+                            print(f"Warning: could not load Lagrange multiplier checkpoint ({e}), initializing to 0.", flush=True)
+                            Lm_[0].assign(0.0)
+
+                    # Restore solid position and velocity at latest_t
+                    if self.moving and self.obstacle is not None:
+                        if hasattr(self.obstacle, 'displacement'):
+                            Dp_new.interpolate(self.obstacle.displacement(init_coords, latest_t))
+                        else:
+                            dx_expr = self.obstacle.displ_x(latest_t)
+                            dy_expr = self.obstacle.displ_y(latest_t)
+                            Dp_new.interpolate(as_vector([dx_expr, dy_expr]))
+                        solid_mesh.coordinates.assign(init_coords + Dp_new)
+
+                        if hasattr(self.obstacle, 'velocity'):
+                            us_.interpolate(self.obstacle.velocity(init_coords, latest_t))
+                        elif hasattr(self.obstacle, 'us_x'):
+                            us_x_expr = self.obstacle.us_x(latest_t)
+                            us_y_expr = self.obstacle.us_y(latest_t)
+                            us_.interpolate(as_vector([us_x_expr, us_y_expr]))
 
         # ----------------------------------
-        # Time-stepping Loop
+        # Time-stepping Loop Setup
         # ----------------------------------
-
-        t_val = 0.0
-        time_varying_bc(0.0)
-
-        # Initial condition initialization for velocity at t = 0
-        if u_init is not None:
-            if callable(u_init):
-                uh_n.interpolate(u_init(fluid_mesh.mesh))
-            else:
-                uh_n.assign(u_init)
+        if resuming:
+            t_val = latest_t
+            start_step = int(round(latest_t / dt))
+            time_varying_bc(latest_t)
         else:
-            print("Initializing velocity with stationary Stokes solver (t=0)...")
-            uh_stokes, _ = solve_stokes_initial(
-                mesh=fluid_mesh.mesh, bcs=bcs, mu=mu, f_custom=f_custom, g_custom=g_custom, W=W
-            )
-            uh_n.assign(uh_stokes)
+            t_val = 0.0
+            time_varying_bc(0.0)
+            # Initial condition initialization for velocity at t = 0
+            if u_init is not None:
+                if callable(u_init):
+                    uh_n.interpolate(u_init(fluid_mesh.mesh))
+                else:
+                    uh_n.assign(u_init)
+            else:
+                print("Initializing velocity with stationary Stokes solver (t=0)...", flush=True)
+                uh_stokes, _ = solve_stokes_initial(
+                    mesh=fluid_mesh.mesh, bcs=bcs, mu=mu, f_custom=f_custom, g_custom=g_custom, W=W
+                )
+                uh_n.assign(uh_stokes)
+            uh.assign(uh_n)
+            save_VTK(file_dict, 0.0, uh_n, ph)
+            save_checkpoint(basedir, 0.0, mesh=fluid_mesh.mesh, moving=False, velocity=uh_n, pressure=ph, lagrange=Lm_[0])
 
-        for step in range(num_steps):
-            t_val += dt
+        for step in range(start_step, num_steps):
+            t_step_start = perf_counter()
+            t_val = round((step + 1) * dt, 10)
             print('t =', t_val)
             t.assign(t_val)
 
@@ -384,12 +450,16 @@ class NS_DLM_Solver:
             uh_n.assign(uh)
 
             # ------- Print max velocity -------
-            print('\tu_max:', uh.dat.data.max())
+            print('\tu_max:', uh.dat.data.max(), flush=True)
             # ----------------------------------
+
+            t_step_duration = perf_counter() - t_step_start
+            if self.print_iteration_time:
+                print(f"\tTempo impiegato per l'iterazione {step + 1}/{num_steps}: {t_step_duration:.4f} s", flush=True)
 
             # Save solution to file (VTK/PVD), checkpoint, and plots
             save_VTK(file_dict, t_val, uh, ph)
-            save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=self.moving, velocity=uh, pressure=ph)
+            save_checkpoint(basedir, t_val, mesh=fluid_mesh.mesh, moving=False, velocity=uh, pressure=ph, lagrange=Lm_[0])
             plot_results(fluid_mesh.mesh, uh, ph, t_val=t_val, basedir=basedir, solid_mesh=solid_mesh)
 
 
@@ -406,8 +476,16 @@ if __name__ == "__main__":
                         choices=['cylinder', 'square', 'line', 'rotating', 'rotating_line'],
                         help='Type of obstacle to use in the simulation.')
     
+    parser.add_argument('--dt', type=float, default=0.1, help='Time step size (default: 0.1)')
+    parser.add_argument('--t_final', type=float, default=20.0, help='Final simulation time (default: 20.0)')
+    parser.add_argument('--print_time', action='store_true', default=None, help='Print iteration time')
+    parser.add_argument('--no_print_time', dest='print_time', action='store_false', help='Do not print iteration time')
+    
+    parser.add_argument('--restart', dest='resume', action='store_false', default=True, help='Restart simulation from t=0, ignoring checkpoints')
+    parser.add_argument('--resume', dest='resume', action='store_true', default=True, help='Resume simulation from latest available checkpoint')
+    
     args = parser.parse_args()
 
     # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
-    solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle)
-    solver.NS_DLM_Solve()
+    solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle, print_iteration_time=args.print_time)
+    solver.NS_DLM_Solve(dt=args.dt, t_final=args.t_final, resume=args.resume)

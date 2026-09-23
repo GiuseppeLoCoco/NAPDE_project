@@ -8,7 +8,7 @@ import os
 import sys
 import math
 import warnings
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -127,32 +127,36 @@ def solve_phase2_brinkman_buffer(n: int, mms: ManufacturedSolution, Lx: float = 
 # 4. ERROR EVALUATION & INTERFACE EXTRACTION
 # =============================================================================
 
-def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
-    """Compute the errors L2(u), H1(u) and L2(p) on Omega_0."""
-    u_ex = mms.u_exact(mesh)
-    p_ex = mms.p_exact(mesh)
-
-    err_u = uh - u_ex
-    err_L2_u = sqrt(assemble(inner(err_u, err_u) * dx(domain=mesh)))
-    err_H1_u = sqrt(assemble((inner(err_u, err_u) + inner(grad(err_u), grad(err_u))) * dx(domain=mesh)))
-
-    vol = assemble(Constant(1.0) * dx(domain=mesh))
-    mean_ph = assemble(ph * dx(domain=mesh)) / vol
-    mean_pex = assemble(p_ex * dx(domain=mesh)) / vol
-    err_p = (ph - mean_ph) - (p_ex - mean_pex)
-    err_L2_p = sqrt(assemble(inner(err_p, err_p) * dx(domain=mesh)))
-
-    return float(err_L2_u), float(err_H1_u), float(err_L2_p)
-
-
-def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) -> Tuple[float, float, float]:
-    """Compute the errors L2(u), H1(u) e L2(p) only on Omega_0 (x >= 0)."""
+def compute_errors_phase1(mesh, uh, ph, mms: ManufacturedSolution, x_start: float = 0.0) -> Tuple[float, float, float]:
+    """Compute the errors L2(u), H1(u) and L2(p) on Omega_0 (or [x_start, Lx] if x_start > 0)."""
     X = SpatialCoordinate(mesh)
     x = X[0]
     u_ex = mms.u_exact(mesh)
     p_ex = mms.p_exact(mesh)
 
-    mask_phys = conditional(ge(x, 0.0), 1.0, 0.0)
+    mask = conditional(ge(x, x_start), 1.0, 0.0) if x_start > 0.0 else Constant(1.0)
+
+    err_u = uh - u_ex
+    err_L2_u = sqrt(assemble(mask * inner(err_u, err_u) * dx(domain=mesh)))
+    err_H1_u = sqrt(assemble(mask * (inner(err_u, err_u) + inner(grad(err_u), grad(err_u))) * dx(domain=mesh)))
+
+    vol = assemble(mask * dx(domain=mesh))
+    mean_ph = assemble(mask * ph * dx(domain=mesh)) / vol
+    mean_pex = assemble(mask * p_ex * dx(domain=mesh)) / vol
+    err_p = (ph - mean_ph) - (p_ex - mean_pex)
+    err_L2_p = sqrt(assemble(mask * inner(err_p, err_p) * dx(domain=mesh)))
+
+    return float(err_L2_u), float(err_H1_u), float(err_L2_p)
+
+
+def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution, x_start: float = 0.0) -> Tuple[float, float, float]:
+    """Compute the errors L2(u), H1(u) e L2(p) on Omega_0 restricted to x >= x_start."""
+    X = SpatialCoordinate(mesh)
+    x = X[0]
+    u_ex = mms.u_exact(mesh)
+    p_ex = mms.p_exact(mesh)
+
+    mask_phys = conditional(ge(x, x_start), 1.0, 0.0)
 
     err_u = uh - u_ex
     err_L2_u = sqrt(assemble(mask_phys * inner(err_u, err_u) * dx(domain=mesh)))
@@ -165,6 +169,25 @@ def compute_errors_phase2_restricted(mesh, uh, ph, mms: ManufacturedSolution) ->
     err_L2_p = sqrt(assemble(mask_phys * inner(err_p, err_p) * dx(domain=mesh)))
 
     return float(err_L2_u), float(err_H1_u), float(err_L2_p)
+
+
+def compute_error_decay_slices(mesh, uh, mms: ManufacturedSolution, x_cuts: Optional[List[float]] = None) -> List[Tuple[float, float]]:
+    """
+    Computes L2(u) error restricted to [x_cut, Lx] for multiple cutoff positions x_cut >= 0.
+    Useful to verify how quickly the Brinkman error decays as we move away from the interface x = 0.
+    """
+    if x_cuts is None:
+        x_cuts = [0.0, 0.05, 0.1, 0.2, 0.5, 1.0]
+    X = SpatialCoordinate(mesh)
+    x = X[0]
+    u_ex = mms.u_exact(mesh)
+    err_u = uh - u_ex
+    decay_results = []
+    for xc in x_cuts:
+        mask = conditional(ge(x, xc), 1.0, 0.0)
+        err_val = float(sqrt(assemble(mask * inner(err_u, err_u) * dx(domain=mesh))))
+        decay_results.append((xc, err_val))
+    return decay_results
 
 
 def extract_interface_profile(uh, mms: ManufacturedSolution, num_points: int = 150) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -206,15 +229,17 @@ def run_experiment_pipeline(
     R_penalty: float = 1.0e4,
     T_end: float = 5.0,
     dt: float = 0.5,
+    x_start: float = 0.0,
     structured: bool = True,
     output_dir: str = "buffer_experiment_results"
 ):
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
 
+    domain_str = f"Physical [{x_start}, {Lx}] x [0, {Ly}] (offset x_start = {x_start})" if x_start > 0.0 else f"Physical [0, {Lx}] x [0, {Ly}]"
     print("=" * 80)
     print("UPSTREAM BUFFER RECOVERY EXPERIMENT: CONFORMING vs BRINKMAN BUFFER")
-    print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e} | Structured: {structured}")
+    print(f"Domain: {domain_str} | Buffer length: {L_buf} | Re: {Re} | R: {R_penalty:.1e} | Structured: {structured}")
     print(f"Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
     print("=" * 80)
 
@@ -230,18 +255,19 @@ def run_experiment_pipeline(
         
         # 1. Phase 1: Conforming
         uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
-        e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
+        e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms, x_start=x_start)
         y_pts_1, u_num_x1, u_ex_x1 = extract_interface_profile(uh_1, mms)
         e_interf_L2_1 = float(np.sqrt(_trapezoid((u_num_x1 - u_ex_x1)**2, y_pts_1)))
         res_p1["L2_u"].append(e_L2_u1)
         res_p1["H1_u"].append(e_H1_u1)
         res_p1["L2_p"].append(e_L2_p1)
         res_p1["interf_L2"].append(e_interf_L2_1)
-        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.4e} | H1(u): {e_H1_u1:.4e} | L2(p): {e_L2_p1:.4e} | Intf_L2(x=0): {e_interf_L2_1:.4e}")
+        label_p1 = f"[Phase 1 Conforming (x >= {x_start})]" if x_start > 0.0 else "[Phase 1 Conforming]"
+        print(f"  {label_p1} L2(u): {e_L2_u1:.4e} | H1(u): {e_H1_u1:.4e} | L2(p): {e_L2_p1:.4e} | Intf_L2(x=0): {e_interf_L2_1:.4e}")
 
         # 2. Phase 2: Buffer Brinkman
         uh_2, ph_2, mesh_2 = solve_phase2_brinkman_buffer(n, mms, Lx, Ly, L_buf, R_penalty, T_end, dt, structured=structured)
-        e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms)
+        e_L2_u2, e_H1_u2, e_L2_p2 = compute_errors_phase2_restricted(mesh_2, uh_2, ph_2, mms, x_start=x_start)
         
         # Interface profile
         y_pts, u_num_x, u_ex_x = extract_interface_profile(uh_2, mms)
@@ -252,7 +278,14 @@ def run_experiment_pipeline(
         res_p2["H1_u"].append(e_H1_u2)
         res_p2["L2_p"].append(e_L2_p2)
         res_p2["interf_L2"].append(e_interf_L2)
-        print(f"  [Phase 2 Buffer Rec] L2(u): {e_L2_u2:.4e} | H1(u): {e_H1_u2:.4e} | L2(p): {e_L2_p2:.4e} | Intf_L2(x=0): {e_interf_L2:.4e}")
+        label_p2 = f"[Phase 2 Buffer Rec (x >= {x_start})]" if x_start > 0.0 else "[Phase 2 Buffer Rec]"
+        print(f"  {label_p2} L2(u): {e_L2_u2:.4e} | H1(u): {e_H1_u2:.4e} | L2(p): {e_L2_p2:.4e} | Intf_L2(x=0): {e_interf_L2:.4e}")
+
+        # Error decay analysis away from interface (x >= 0.0, 0.05, 0.1, 0.2, 0.5, 1.0)
+        decay_slices = compute_error_decay_slices(mesh_2, uh_2, mms)
+        ref_err = decay_slices[0][1] if decay_slices and decay_slices[0][1] > 0 else 1.0
+        decay_str = " | ".join([f"x>={xc:.2f}: {err:.3e} ({err/ref_err*100:5.1f}%)" for xc, err in decay_slices])
+        print(f"  [Error Decay vs Distance from Interface x=0]\n    {decay_str}")
 
     # -------------------------------------------------------------------------
     # 5. PRINT CONVERGENCE SUMMARY TABLES (via experiment_plots module)
@@ -263,12 +296,13 @@ def run_experiment_pipeline(
         plot_interface_velocity_profile
     )
 
+    method_title = f"Brinkman (x >= {x_start})" if x_start > 0.0 else "Brinkman"
     print_phase_comparison_tables(
         resolutions=resolutions,
         h_vals=h_vals,
         res_p1=res_p1,
         res_p2=res_p2,
-        method_name="Brinkman"
+        method_name=method_title
     )
 
     # -------------------------------------------------------------------------
@@ -281,7 +315,7 @@ def run_experiment_pipeline(
         h_vals=h_vals,
         res_p1=res_p1,
         res_p2=res_p2,
-        method_name="Brinkman",
+        method_name=method_title,
         output_path=conv_plot_path
     )
 
@@ -305,14 +339,15 @@ def run_experiment_pipeline(
 
 if __name__ == "__main__":
     run_experiment_pipeline(
-        resolutions=[160],       # Resolutions
+        resolutions=[40, 80, 120, 160],       # Resolutions
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,                      # Length of the buffer region
         Re=40.0,
-        R_penalty=1.0e5,                # Brinkman penalty term
-        T_end=30,                      # Final time
+        R_penalty=1.0e3,                # Brinkman penalty term
+        T_end=30,                       # Final time
         dt=0.5,
+        x_start=2,                    # Calcolo dell'errore a partire da x >= 0.1 (dopo l'interfaccia x=0)
         structured=False,               # Set False for unstructured mesh
         output_dir="results_Brinkman_buffer_recovery_unstructured"
     )

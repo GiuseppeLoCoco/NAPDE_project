@@ -212,7 +212,8 @@ def run_dlm_experiment_pipeline(
     T_end: float = 5.0,
     dt: float = 0.5,
     structured: bool = True,
-    output_dir: str = "results_dlm_buffer_recovery"
+    output_dir: str = "results_dlm_buffer_recovery",
+    run_phase1: bool = False
 ):
     os.makedirs(output_dir, exist_ok=True)
     mms = ManufacturedSolution(Lx=Lx, Ly=Ly, Re=Re)
@@ -220,7 +221,7 @@ def run_dlm_experiment_pipeline(
     print("=" * 90)
     print("UPSTREAM BUFFER RECOVERY EXPERIMENT: DLM BUFFER")
     print(f"Domain: Physical [0, {Lx}] x [0, {Ly}] + Buffer [-{L_buf}, 0] x [0, {Ly}] | Re = {Re} | Structured: {structured}")
-    print(f"Mesh Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s)")
+    print(f"Mesh Resolutions n: {resolutions} | Final Time T: {T_end}s (dt = {dt}s) | Phase 1 (Conforming): {run_phase1}")
     print("=" * 90)
 
     res_p1 = {"L2_u": [], "H1_u": [], "L2_p": [], "interf_L2": []}
@@ -232,16 +233,17 @@ def run_dlm_experiment_pipeline(
     for n in resolutions:
         print(f"\n---> Running Resolution n = {n:3d} (h = {Lx/n:.4f}, structured = {structured}) ...")
 
-        # 1. Phase 1: Conforming Benchmark
-        uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
-        e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
-        y_pts_1, u_num_x1, u_ex_x1 = extract_interface_profile(uh_1, mms)
-        e_interf_L2_1 = float(np.sqrt(_trapezoid((u_num_x1 - u_ex_x1)**2, y_pts_1)))
-        res_p1["L2_u"].append(e_L2_u1)
-        res_p1["H1_u"].append(e_H1_u1)
-        res_p1["L2_p"].append(e_L2_p1)
-        res_p1["interf_L2"].append(e_interf_L2_1)
-        print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e} | Intf_L2(x=0): {e_interf_L2_1:.5e}")
+        # 1. Phase 1: Conforming Benchmark (Optional)
+        if run_phase1:
+            uh_1, ph_1, mesh_1 = solve_phase1_conforming(n, mms, Lx, Ly, T_end, dt, structured=structured)
+            e_L2_u1, e_H1_u1, e_L2_p1 = compute_errors_phase1(mesh_1, uh_1, ph_1, mms)
+            y_pts_1, u_num_x1, u_ex_x1 = extract_interface_profile(uh_1, mms)
+            e_interf_L2_1 = float(np.sqrt(_trapezoid((u_num_x1 - u_ex_x1)**2, y_pts_1)))
+            res_p1["L2_u"].append(e_L2_u1)
+            res_p1["H1_u"].append(e_H1_u1)
+            res_p1["L2_p"].append(e_L2_p1)
+            res_p1["interf_L2"].append(e_interf_L2_1)
+            print(f"  [Phase 1 Conforming] L2(u): {e_L2_u1:.5e} | H1(u): {e_H1_u1:.5e} | L2(p): {e_L2_p1:.5e} | Intf_L2(x=0): {e_interf_L2_1:.5e}")
 
         # 2. Phase 2: DLM Buffer Recovery
         uh_2, ph_2, mesh_2 = solve_phase2_dlm_buffer(n, mms, Lx, Ly, L_buf, T_end, dt, structured=structured)
@@ -256,7 +258,9 @@ def run_dlm_experiment_pipeline(
         profiles_p2[n] = (y_pts, u_x_num)
         print(f"  [Phase 2 DLM Buffer] L2(u): {e_L2_u2:.5e} | H1(u): {e_H1_u2:.5e} | L2(p): {e_L2_p2:.5e} | Interface L2: {e_intf:.5e}")
 
-        del uh_1, ph_1, mesh_1, uh_2, ph_2, mesh_2
+        if run_phase1:
+            del uh_1, ph_1, mesh_1
+        del uh_2, ph_2, mesh_2
         gc.collect()
 
     # -------------------------------------------------------------------------
@@ -265,30 +269,54 @@ def run_dlm_experiment_pipeline(
     from experiment_plots import (
         print_phase_comparison_tables,
         plot_phase_comparison_loglog,
+        print_spatial_convergence_table,
+        plot_spatial_convergence_with_interface,
         plot_interface_velocity_profile
     )
 
-    print_phase_comparison_tables(
-        resolutions=resolutions,
-        h_vals=h_vals,
-        res_p1=res_p1,
-        res_p2=res_p2,
-        method_name="DLM"
-    )
+    if run_phase1:
+        print_phase_comparison_tables(
+            resolutions=resolutions,
+            h_vals=h_vals,
+            res_p1=res_p1,
+            res_p2=res_p2,
+            method_name="DLM"
+        )
+    else:
+        print_spatial_convergence_table(
+            resolutions=resolutions,
+            h_vals=h_vals,
+            errs_L2_u=res_p2["L2_u"],
+            errs_H1_u=res_p2["H1_u"],
+            method_name="DLM",
+            errs_L2_p=res_p2["L2_p"],
+            errs_intf=res_p2["interf_L2"]
+        )
 
     # -------------------------------------------------------------------------
     # 6. GENERATE COMPARISON PLOTS (via experiment_plots module)
     # -------------------------------------------------------------------------
 
     # Plot 1: Spatial Log-Log Convergence Plot
-    conv_plot_path = os.path.join(output_dir, "convergence_comparison_loglog.png")
-    plot_phase_comparison_loglog(
-        h_vals=h_vals,
-        res_p1=res_p1,
-        res_p2=res_p2,
-        method_name="DLM",
-        output_path=conv_plot_path
-    )
+    if run_phase1:
+        conv_plot_path = os.path.join(output_dir, "convergence_comparison_loglog.png")
+        plot_phase_comparison_loglog(
+            h_vals=h_vals,
+            res_p1=res_p1,
+            res_p2=res_p2,
+            method_name="DLM",
+            output_path=conv_plot_path
+        )
+    else:
+        conv_plot_path = os.path.join(output_dir, "convergence_loglog.png")
+        plot_spatial_convergence_with_interface(
+            h_vals=h_vals,
+            errs_L2_u=res_p2["L2_u"],
+            errs_H1_u=res_p2["H1_u"],
+            errs_intf=res_p2["interf_L2"],
+            method_name="DLM",
+            output_path=conv_plot_path
+        )
 
     # Plot 2: Interface Velocity Cut Profile
     prof_plot_path = os.path.join(output_dir, "interface_velocity_recovery.png")
@@ -310,13 +338,14 @@ def run_dlm_experiment_pipeline(
 
 if __name__ == "__main__":
     run_dlm_experiment_pipeline(
-        resolutions=[40, 80, 120],
+        resolutions=[40, 80, 120, 160,200],
         Lx=4.0,
         Ly=1.0,
         L_buf=1.0,
         Re=40.0,
         T_end=30,
-        dt=0.5,
+        dt=0.1,
         structured=False,               # Set False for unstructured mesh
-        output_dir="results_dlm_buffer_recovery"
+        output_dir="results_dlm_buffer_recovery",
+        run_phase1=False
     )

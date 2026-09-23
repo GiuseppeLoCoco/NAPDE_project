@@ -81,15 +81,15 @@ def load_hdf5_solution(filepath: str, field_name: str):
 
 def find_latest_checkpoint_in_dir(base_dir: str):
     """
-    Finds the latest available checkpoint (maximum t) in base_dir containing mesh, velocity, and pressure.
+    Finds the latest available and uncorrupted checkpoint (maximum t) in base_dir.
     Returns (mesh_file, velocity_file, pressure_file, latest_t) or (None, None, None, None).
     """
-    mesh_file = os.path.join(base_dir, "mesh", "mesh.h5")
     vel_dir = os.path.join(base_dir, "velocity")
-    press_dir = os.path.join(base_dir, "pressure")
-
-    if not (os.path.exists(mesh_file) and os.path.isdir(vel_dir) and os.path.isdir(press_dir)):
+    if not (os.path.isdir(base_dir) and os.path.isdir(vel_dir)):
         return None, None, None, None
+
+    press_dir = os.path.join(base_dir, "pressure")
+    mesh_dir = os.path.join(base_dir, "mesh")
 
     vel_files = [f for f in os.listdir(vel_dir) if f.startswith("velocity_t=") and f.endswith(".h5")]
     if not vel_files:
@@ -98,21 +98,43 @@ def find_latest_checkpoint_in_dir(base_dir: str):
     candidates = []
     for vf in vel_files:
         t_str = vf[len("velocity_t="):-len(".h5")]
-        pf = f"pressure_t={t_str}.h5"
-        press_path = os.path.join(press_dir, pf)
-        if os.path.exists(press_path):
-            try:
-                t_val = float(t_str)
-                candidates.append((t_val, os.path.join(vel_dir, vf), press_path))
-            except ValueError:
-                continue
+        try:
+            t_val = float(t_str)
+            candidates.append((t_val, t_str, os.path.join(vel_dir, vf)))
+        except ValueError:
+            continue
 
     if not candidates:
         return None, None, None, None
 
     candidates.sort(key=lambda x: x[0], reverse=True)
-    latest_t, best_vel, best_press = candidates[0]
-    return mesh_file, best_vel, best_press, latest_t
+
+    for t_val, t_str, vf_path in candidates:
+        pf = f"pressure_t={t_str}.h5"
+        press_path = os.path.join(press_dir, pf)
+        if not os.path.exists(press_path):
+            press_path = None
+
+        mesh_path = os.path.join(mesh_dir, f"mesh_t={t_str}.h5")
+        if not os.path.exists(mesh_path):
+            mesh_path = os.path.join(mesh_dir, "mesh.h5")
+            if not os.path.exists(mesh_path):
+                mesh_path = vf_path
+
+        try:
+            with CheckpointFile(vf_path, 'r') as chk:
+                _ = _safe_load_mesh(chk)
+            if press_path is not None:
+                try:
+                    with CheckpointFile(press_path, 'r') as chk_p:
+                        _ = _safe_load_mesh(chk_p)
+                except Exception:
+                    continue
+            return mesh_path, vf_path, press_path, t_val
+        except Exception:
+            continue
+
+    return None, None, None, None
 
 
 from firedrake import CheckpointFile, FunctionSpace, Function
