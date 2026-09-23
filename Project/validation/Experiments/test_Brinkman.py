@@ -39,7 +39,7 @@ from validation.checkpoint_loader import load_conforming_solution, load_brinkman
 
 
 # =============================================================================
-# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Dominio Fisico Omega_0)
+# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Physical Domain Omega_0)
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,
@@ -347,7 +347,7 @@ if __name__ == "__main__":
         R_penalty=1.0e3,                # Brinkman penalty term
         T_end=30,                       # Final time
         dt=0.5,
-        x_start=2,                    # Calcolo dell'errore a partire da x >= 0.1 (dopo l'interfaccia x=0)
+        x_start=2,                    # Error calculation starting from x >= 2 (after the interface)
         structured=False,               # Set False for unstructured mesh
         output_dir="results_Brinkman_buffer_recovery_unstructured"
     )

@@ -222,8 +222,8 @@ def setup_pvd_resume(basedir: str, file_dict: dict, latest_t: float):
 
 def save_VTK(file_dict, t, uh, ph, **kwargs):
     """
-    Salva i risultati (velocità, pressione, e campi extra) in formato VTK.
-    Preserva la cronologia PVD se la simulazione è stata ripresa.
+    Saves results (velocity, pressure, and extra fields) in VTK format.
+    Preserves PVD history if the simulation was resumed.
     """
     uh.rename('u', 'u')
     ph.rename('p', 'p')
@@ -249,10 +249,10 @@ def save_VTK(file_dict, t, uh, ph, **kwargs):
 
 def save_checkpoint(basedir, t_val, mesh=None, moving=False, **kwargs):
     """
-    Salva i risultati e la mesh in file checkpoint (.h5) per il post-processing.
-    Utilizza scrittura atomica (.tmp -> .h5) per proteggere i dati da interruzioni accidentali.
+    Saves simulation results and mesh to checkpoint (.h5) files for post-processing.
+    Uses atomic writes (.tmp -> .h5) to protect data from accidental interruptions.
     """
-    # Salvataggio delle funzioni passate come kwargs
+    # Save functions passed as kwargs
     for name, function in kwargs.items():
         if function is None:
             continue
@@ -273,14 +273,14 @@ def save_checkpoint(basedir, t_val, mesh=None, moving=False, **kwargs):
                     pass
             raise
 
-    # Salvataggio della mesh
+    # Save mesh
     if mesh:
         basedir_mesh = os.path.join(basedir, 'mesh')
         os.makedirs(basedir_mesh, exist_ok=True)
         mesh_filename = f'mesh_t={t_val:.2f}.h5' if moving else 'mesh.h5'
         mesh_path = os.path.join(basedir_mesh, mesh_filename)
 
-        # Se la mesh è fissa e il file esiste già, non è necessario riscriverlo ad ogni passo
+        # If mesh is fixed and file already exists, no need to rewrite it at every step
         if not (not moving and os.path.exists(mesh_path)):
             temp_mesh = mesh_path + ".tmp"
             try:
@@ -298,36 +298,35 @@ def save_checkpoint(basedir, t_val, mesh=None, moving=False, **kwargs):
 
 def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
     """
-    Crea e salva un'immagine con i plot di mesh, pressione e velocità.
-    Se passato `solid_mesh`, sovrappone la geometria del cilindro solido in rosso.
+    Creates and saves an image with mesh, pressure, and velocity plots.
+    If `solid_mesh` is provided, overlays the solid obstacle geometry in red.
     """
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    time_str = f" a t = {t_val:.2f}" if t_val is not None else ""
+    time_str = f" at t = {t_val:.2f}" if t_val is not None else ""
 
     x_coords = mesh.coordinates.dat.data_ro[:, 0]
     y_coords = mesh.coordinates.dat.data_ro[:, 1]
     xmin, xmax = x_coords.min(), x_coords.max()
     ymin, ymax = y_coords.min(), y_coords.max()
 
-    # Plot della Mesh Fluida
+    # Fluid mesh plot
     axes[0].set_title(f"Mesh{time_str}")
     triplot(mesh, axes=axes[0], interior_kw={"color": "lightgray", "linewidth": 0.05})
     # triplot(mesh, axes=axes[0], interior_kw={"color": "k", "linewidth": 0.1, "alpha": 0.2})
     
-    # Plot della Pressione
+    # Pressure plot
     axes[1].set_title(f"Pressure (p){time_str}")
     plot_p = tripcolor(ph, axes=axes[1], cmap='coolwarm')
     fig.colorbar(plot_p, ax=axes[1], orientation='vertical', fraction=0.046, pad=0.04)
 
-    # Plot della Velocità
+    # Velocity plot
     axes[2].set_title(f"Velocity (u){time_str}")
     V_scalar = FunctionSpace(mesh, "CG", 1)
     u_mag = Function(V_scalar).interpolate(sqrt(inner(uh, uh)))
     plot_u = tripcolor(u_mag, axes=axes[2], cmap='viridis')
     fig.colorbar(plot_u, ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
 
-    # Sovrapposizione del cilindro solido (se presente)
-
+    # Overlay solid obstacle (if present)
     if solid_mesh is not None:
         sm = solid_mesh.mesh if hasattr(solid_mesh, 'mesh') else solid_mesh
         for ax in axes:
@@ -341,7 +340,7 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
 
     plt.tight_layout()
 
-    # Salvataggio della figura
+    # Save figure
     plot_dir = os.path.join(basedir, 'plots')
     os.makedirs(plot_dir, exist_ok=True)
     plt.savefig(os.path.join(plot_dir, f'plot_t={t_val:.2f}.png'), dpi=200)
@@ -350,11 +349,11 @@ def plot_results(mesh, uh, ph, t_val, basedir, solid_mesh=None):
 
 def create_output_folders(solver_name, params, extra_fields=None):
     """
-    Crea la directory di output e restituisce il percorso base e il dizionario per i file VTK.
+    Creates the output directory and returns the base directory path and VTK file dictionary.
     """
     extra_fields = extra_fields or []
     
-    # Costruisce un percorso robusto partendo dalla directory del progetto (Project/)
+    # Builds a robust path starting from the project directory (Project/)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if params.get('is_mms'):
         base_plot_dir = os.path.join(project_root, 'Plots', 'MMS', solver_name)
@@ -388,7 +387,7 @@ def create_output_folders(solver_name, params, extra_fields=None):
     basedir = os.path.join(base_plot_dir, *path_parts[1:], param_string)
     os.makedirs(basedir, exist_ok=True)
 
-    # Creazione file VTK
+    # Create VTK files
     file_dict = {
         'u': VTKFile(os.path.join(basedir, 'velocity.pvd')),
         'p': VTKFile(os.path.join(basedir, 'pressure.pvd'))

@@ -309,7 +309,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', dest='resume', action='store_true', default=True, help='Resume simulation from latest available checkpoint')
     args = parser.parse_args()
 
-    # Istanziamo la classe e chiamiamo il solver
+    # Instantiate class and call solver
     solver = Brinkman_solver(moving=args.moving, type_obstacle=args.obstacle, print_iteration_time=args.print_time)
     solver.Brinkman_solve(dt=args.dt, t_final=args.t_final, resume=args.resume)
 

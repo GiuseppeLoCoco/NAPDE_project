@@ -7,8 +7,6 @@ Includes:
 - Summary tables printing (Phase comparison, Spatial convergence, Strategy A, Strategy B)
 - Phase comparison convergence plots (Conforming vs Buffer method)
 - Spatial grid convergence plots with interface trace error
-- Brinkman Strategy A (Penalty R-sweep at fixed mesh size)
-- Brinkman Strategy B (Balanced scaling R(h) ~ h^-2)
 - Vertical interface velocity profile recovery plots
 """
 

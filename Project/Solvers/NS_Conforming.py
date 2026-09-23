@@ -304,11 +304,9 @@ class Conforming_solver:
             if self.print_iteration_time:
                 print(f"\tTempo impiegato per l'iterazione {step + 1}/{num_steps}: {t_step_duration:.4f} s", flush=True)
 
-            # Cancella gli oggetti pesanti legati alla vecchia mesh
             if self.moving:
                 del a, L, bcs, sol
             
-            # Forza lo spazzino di Python a liberare fisicamente la RAM
             gc.collect()
 
         wall_time = time() - t_start

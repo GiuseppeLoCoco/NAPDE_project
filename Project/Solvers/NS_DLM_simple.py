@@ -36,7 +36,7 @@ class NS_DLM_Solver:
 
     def __init__(self, moving=True, type_obstacle="cylinder", n=None, Re=None, structured=True, print_iteration_time=None):  
 
-        self.moving = moving # Questo verrà sovrascritto per gli ostacoli fissi
+        self.moving = moving # This will be overwritten for fixed obstacles
         self.mean = True
         self.type_obstacle = type_obstacle
         self.n = n if n is not None else user_parameters.n
@@ -485,7 +485,5 @@ if __name__ == "__main__":
     parser.add_argument('--resume', dest='resume', action='store_true', default=True, help='Resume simulation from latest available checkpoint')
     
     args = parser.parse_args()
-
-    # Istanziamo la classe passando il tipo di ostacolo letto da riga di comando
     solver = NS_DLM_Solver(moving=args.moving, type_obstacle=args.obstacle, print_iteration_time=args.print_time)
     solver.NS_DLM_Solve(dt=args.dt, t_final=args.t_final, resume=args.resume)

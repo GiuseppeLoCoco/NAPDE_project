@@ -42,7 +42,7 @@ from validation.checkpoint_loader import load_conforming_solution, load_dlm_solu
 
 
 # =============================================================================
-# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Dominio Fisico Omega_0)
+# 2. PHASE 1: CONFORMING BENCHMARK SOLVER (Physical Domain Omega_0)
 # =============================================================================
 
 def solve_phase1_conforming(n: int, mms: ManufacturedSolution, Lx: float = 4.0, Ly: float = 1.0,

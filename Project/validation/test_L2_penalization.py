@@ -376,24 +376,24 @@ def run_unsteady_experiment(eta_list=None, n=320, T_end=15.0, dt=0.05, output_di
 
 if __name__ == "__main__":
     # =========================================================================
-    # PARAMETRI MODIFICABILI DIRETTAMENTE DA CODICE
+    # PARAMETERS CONFIGURABLE DIRECTLY IN CODE
     # =========================================================================
-    # Modalità di test: "steady" (Re=40), "unsteady" (Re=80), o "all"
+    # Test mode: "steady" (Re=40), "unsteady" (Re=80), or "all"
     mode = "steady"
 
-    # Risoluzione mesh (es. n=320 per benchmark finale, n=80 per test veloci)
+    # Mesh resolution (e.g. n=320 for final benchmark, n=80 for quick tests)
     n = 320
 
-    # Passo temporale dt (es. dt=0.5 o dt=0.05)
+    # Time step size dt (e.g. dt=0.5 or dt=0.05)
     dt = 0.2
 
-    # Tempo finale di simulazione
+    # Final simulation time
     T_end_steady = 20.0
-    T_end_unsteady =20.0
+    T_end_unsteady = 20.0
 
-    # Lista di valori di eta (permeabilità = 1/R) da testare
+    # List of eta values (permeability = 1/R) to test
     eta_list_steady = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
-    eta_list_unsteady = [1e-2, 1e-4, 1e-6,1e-8]
+    eta_list_unsteady = [1e-2, 1e-4, 1e-6, 1e-8]
     # =========================================================================
 
     parser = argparse.ArgumentParser(description="L2 Penalization Validation (Angot et al. 1999)")

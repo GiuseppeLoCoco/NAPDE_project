@@ -54,7 +54,7 @@ python3 NS_Brinkman.py --obstacle cylinder --dt 0.1 --t_final 10.0
 #### Option B: Direct Execution from Host
 Run commands through `apptainer exec` without entering an interactive shell:
 ```bash
-apptainer exec path/to/firedrake-container.sif python3 Project/Solvers/NS_Brinkman.py --obstacle cylinder
+apptainer exec path/to/firedrake-vanilla-default.sif python3 Project/Solvers/NS_Brinkman.py --obstacle cylinder
 ```
 
 ---
@@ -68,7 +68,7 @@ Project/
 ├── Solvers/                   # Navier-Stokes & Stokes solver implementations
 │   ├── NS_Conforming.py       # Conforming (body-fitted mesh) solver (benchmark reference)
 │   ├── NS_Brinkman.py         # Brinkman L2 volume penalization solver
-│   ├── NS_RIIS.py             # Regularized Immersed Interface Solver (RIIS)
+│   ├── NS_RIIS.py             # Resistive Immersed Implicit Surface (RIIS) solver
 │   ├── NS_DLM_simple.py       # Distributed Lagrange Multiplier (DLM/FD) solver
 │   └── Stokes_solver.py       # Steady Stokes solver (used for initial conditions)
 │
@@ -95,8 +95,7 @@ Project/
 │   └── Experiments/           # Buffer layer recovery benchmark experiments
 │       ├── test_Brinkman.py   # Buffer recovery analysis for Brinkman penalization
 │       ├── test_RIIS.py       # Buffer recovery analysis for RIIS
-│       ├── test_DLM.py        # Buffer recovery analysis for DLM/FD
-│     
+│       └── test_DLM.py        # Buffer recovery analysis for DLM/FD
 │
 └── Plots/                     # Generated figures, velocity profile comparisons, and convergence curves
 ```
@@ -137,7 +136,7 @@ Each solver script provides a command-line interface via `argparse`. The followi
   python3 NS_Brinkman.py --obstacle cylinder --dt 0.1 --t_final 20.0
   ```
 
-- **Regularized Immersed Interface Solver (RIIS)**:
+- **Resistive Immersed Implicit Surface (RIIS)**:
   ```bash
   cd Project/Solvers
   python3 NS_RIIS.py --obstacle square --dt 0.1 --t_final 10.0
@@ -196,6 +195,22 @@ python3 test_L2_penalization.py --mode unsteady
 # Run both regimes
 python3 test_L2_penalization.py --mode all
 ```
+
+#### Modifying Parameters in the Script:
+Open `Project/validation/test_L2_penalization.py` and adjust the configuration block at lines 378–397:
+```python
+# PARAMETERS CONFIGURABLE DIRECTLY IN CODE
+mode = "steady"                 # "steady", "unsteady", or "all"
+n = 320                         # Mesh resolution (e.g., 320 for publication benchmark, 80 for quick run)
+dt = 0.2                        # Time step size
+T_end_steady = 20.0             # Final time for steady test
+T_end_unsteady = 20.0           # Final time for unsteady test
+eta_list_steady = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+eta_list_unsteady = [1e-2, 1e-4, 1e-6, 1e-8]
+```
+
+---
+
 ### Convergence Analysis
 
 The script `Project/validation/convergence_analysis.py` evaluates the spatial convergence order of the immersed methods against a high-resolution conforming simulation ($n = 320$). It computes:
@@ -208,7 +223,22 @@ The script `Project/validation/convergence_analysis.py` evaluates the spatial co
 ```bash
 cd Project/validation
 python3 convergence_analysis.py
-`
+```
+
+#### Modifying Parameters in the Script:
+Open `Project/validation/convergence_analysis.py` and modify the parameters in the `if __name__ == "__main__":` block:
+```python
+resolutions = [40, 80, 120, 160]   # Mesh refinement levels to test
+obstacle_type = "square"           # "square" or "cylinder"
+solver_type = "Brinkman"           # "Brinkman", "RIIS", or "dlm"
+Re = 40.0                          # Reynolds number
+refinement_conforming = 320        # Resolution of conforming reference solution
+R_penalty = 1.0e6                  # Resistive parameter R for Brinkman / RIIS
+eps_RIIS = 0.05                    # Interface thickness for RIIS
+dt = 0.1                           # Time step size
+t_final = 20.0                     # Final simulation time
+```
+
 ---
 
 ## Running Buffer Recovery Experiments
@@ -220,9 +250,8 @@ The directory `Project/validation/Experiments/` contains scripts testing the **u
 ### Available Experiment Scripts:
 
 1. **`test_Brinkman.py`**: Buffer recovery using the $L^2$ Brinkman penalization method.
-2. **`test_RIIS.py`**: Buffer recovery using the Regularized Immersed Interface Solver.
+2. **`test_RIIS.py`**: Buffer recovery using the Resistive Immersed Implicit Surface method.
 3. **`test_DLM.py`**: Buffer recovery using the Distributed Lagrange Multiplier (DLM/FD) formulation.
-4. **`test_Brinkman_ResistiveTerm.py`**: Sensitivity and scaling analysis of the Brinkman resistive parameter $R$ in the buffer zone.
 
 ### Running from Terminal:
 
@@ -237,14 +266,24 @@ python3 test_RIIS.py
 
 # DLM/FD buffer recovery test
 python3 test_DLM.py
-
-# Resistive term scaling test
-python3 test_Brinkman_ResistiveTerm.py
 ```
 
 ### Modifying Parameters in the Script:
 Parameters can be configured directly inside the `if __name__ == "__main__":` block of each experiment file:
 ```python
+run_experiment_pipeline(
+    resolutions=[40, 80, 120, 160],   # Grid resolutions n
+    Lx=4.0,                           # Channel length
+    Ly=1.0,                           # Channel height
+    L_buf=1.0,                        # Length of buffer region
+    Re=40.0,                          # Reynolds number
+    R_penalty=1.0e3,                  # Penalty parameter
+    T_end=30.0,                       # Simulation end time
+    dt=0.5,                           # Time step
+    structured=False,                 # Set True for structured mesh, False for unstructured
+    output_dir="results_Brinkman_buffer_recovery_unstructured"
+)
+```
 
 ---
 

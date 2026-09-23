@@ -55,8 +55,8 @@ def create_boundary_conditions_correction(fluid_mesh, V, type_obstacle: str):
 
 def create_bcs_penalty(W, mesh, type_obstacle: str):
     """
-    Crea le condizioni al contorno per i solutori Brinkman e RIIS
-    che utilizzano una RectangleMesh standard.
+    Creates boundary conditions for Brinkman and RIIS solvers
+    using a standard RectangleMesh.
     IDs: 1 (inflow), 2 (outflow), 3 (bottom wall), 4 (top wall).
     """
     if type_obstacle == "buffer":
@@ -78,11 +78,11 @@ def create_bcs_penalty(W, mesh, type_obstacle: str):
 
 def create_bcs_conforming(W, mesh, w_obstacle_velocity, type_obstacle: str): # t_constant is now handled by t_param global
     """
-    Crea le condizioni al contorno per il solutore Conforming.
+    Creates boundary conditions for the Conforming solver.
     IDs: 1 (inflow), 3 (bottom wall), 4 (top wall), 5 (obstacle).
-    Non impone condizioni di Dirichlet sulla pressione all'outflow.
+    Does not impose Dirichlet conditions on pressure at the outflow.
     """
-    # Usa la funzione condivisa per il profilo di inflow
+    # Use shared function for inflow profile
     inflow_profile = get_inflow_profile(mesh, type_obstacle = type_obstacle)
 
     # Define boundaries (IDs are consistent with mesh_settings.py)
